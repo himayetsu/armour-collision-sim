@@ -640,7 +640,6 @@ class MainWindow(QMainWindow):
             dup.anchored = getattr(src, 'anchored', True)
         dup.rebuild()
         offset = np.mean(src.pos, axis=0) - np.mean(dup.pos, axis=0)
-        offset[1] += 0.04
         dup.pos += offset
         dup.rest_pos += offset
         self.physics.bodies.append(dup)
