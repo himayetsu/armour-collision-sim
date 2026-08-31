@@ -20,6 +20,9 @@ class PhysicsEngine:
         self.detonations = []
         # Precomputed contact-area constant (depends only on collision_dist).
         self._ca = np.pi * (self.collision_dist * 0.5) ** 2
+        # Packed collision world: static arrays live across substeps; pos/vel
+        # are copied in each call. Rebuilt only when the body list / materials change.
+        self._world = None
 
     def reset(self):
         self.time = 0.0
@@ -94,34 +97,150 @@ class PhysicsEngine:
             'static_backup': None if body.static is None else body.static.copy(),
         })
 
-    def _pack_particles(self):
-        pos, vel, mass, owners, local_i, locked = [], [], [], [], [], []
+    def _ensure_world(self):
+        """Build or reuse packed per-particle arrays that do not change mid-step."""
+        slices = []
+        sig_parts = []
+        n_total = 0
+        col_dist = self.collision_dist
         for bi, b in enumerate(self.bodies):
             if b.pos is None:
                 continue
             n = b.n_particles
-            pos.append(b.pos.astype(np.float64))
-            vel.append(b.vel.astype(np.float64))
-            mass.append(b.mass.astype(np.float64))
-            owners.append(np.full(n, bi, dtype=np.int32))
-            local_i.append(np.arange(n, dtype=np.int32))
-            lock = np.zeros(n, dtype=bool)
-            if b.static is not None:
-                lock |= b.static
-            locked.append(lock)
-        if not pos:
+            slices.append((bi, n_total, n))
+            sig_parts.append((
+                id(b), n, id(b.mass), b.material, b.body_type,
+                float(getattr(b, 'particle_spacing', col_dist)),
+            ))
+            n_total += n
+        sig = (n_total, col_dist, tuple(sig_parts))
+        w = self._world
+        if w is not None and w['sig'] == sig:
+            return w
+        if n_total == 0:
+            self._world = None
+            return None
+
+        mass = np.empty(n_total, dtype=np.float64)
+        body_idx = np.empty(n_total, dtype=np.int32)
+        part_idx = np.empty(n_total, dtype=np.int32)
+        strength = np.empty(n_total, dtype=np.float64)
+        restitution = np.empty(n_total, dtype=np.float64)
+        youngs = np.empty(n_total, dtype=np.float64)
+        friction = np.empty(n_total, dtype=np.float64)
+        init_vel = np.empty(n_total, dtype=np.float64)
+        is_pen = np.empty(n_total, dtype=np.int8)
+        spacing = np.empty(n_total, dtype=np.float64)
+        n_max = 0
+        for bi, off, n in slices:
+            body = self.bodies[bi]
+            sl = slice(off, off + n)
+            mat = MATERIALS[body.material]
+            mass[sl] = body.mass
+            body_idx[sl] = bi
+            part_idx[sl] = np.arange(n, dtype=np.int32)
+            strength[sl] = mat['strength']
+            restitution[sl] = mat['restitution']
+            youngs[sl] = mat['youngs_modulus']
+            friction[sl] = mat['friction_coeff']
+            init_vel[sl] = (mat.get('initiation_velocity', 0.0)
+                            if mat.get('explosive') else 0.0)
+            is_pen[sl] = 1 if body.body_type == 'penetrator' else 0
+            spacing[sl] = getattr(body, 'particle_spacing', col_dist)
+            if n > n_max:
+                n_max = n
+
+        self._world = {
+            'sig': sig,
+            'slices': slices,
+            'pos': np.empty((n_total, 3), dtype=np.float64),
+            'vel': np.empty((n_total, 3), dtype=np.float64),
+            'mass': mass,
+            'body_idx': body_idx,
+            'part_idx': part_idx,
+            'strength': strength,
+            'restitution': restitution,
+            'youngs': youngs,
+            'friction': friction,
+            'init_vel': init_vel,
+            'is_pen': is_pen,
+            'spacing': spacing,
+            'locked': np.zeros(n_total, dtype=bool),
+            'n_max': n_max,
+            'spring_enc': {},
+            'spring_sig': {},
+        }
+        return self._world
+
+    def _sync_world_pv(self, w):
+        pos, vel = w['pos'], w['vel']
+        for bi, off, n in w['slices']:
+            body = self.bodies[bi]
+            pos[off:off + n] = body.pos
+            vel[off:off + n] = body.vel
+
+    def _writeback_world_pv(self, w, write_pos=True, write_vel=True):
+        pos, vel = w['pos'], w['vel']
+        for bi, off, n in w['slices']:
+            body = self.bodies[bi]
+            if write_pos:
+                body.pos[:] = pos[off:off + n]
+            if write_vel:
+                body.vel[:] = vel[off:off + n]
+
+    def _cached_spring_encoded(self, w):
+        enc = w['spring_enc']
+        sigs = w['spring_sig']
+        n_max = w['n_max']
+        live = {bi for bi, _, _ in w['slices']}
+        for bi in list(enc):
+            if bi not in live:
+                del enc[bi]
+                sigs.pop(bi, None)
+        for bi, _, _ in w['slices']:
+            body = self.bodies[bi]
+            springs = body.springs
+            if springs is None or len(springs) == 0:
+                enc.pop(bi, None)
+                sigs.pop(bi, None)
+                continue
+            ssig = (id(springs), len(springs))
+            if sigs.get(bi) == ssig:
+                continue
+            lo = np.minimum(springs[:, 0], springs[:, 1]).astype(np.int64)
+            hi = np.maximum(springs[:, 0], springs[:, 1]).astype(np.int64)
+            enc[bi] = lo * n_max + hi
+            sigs[bi] = ssig
+        return enc
+
+    def _pack_particles(self):
+        w = self._ensure_world()
+        if w is None:
             return None, None, None, None, None, None
-        return (np.vstack(pos), np.vstack(vel), np.concatenate(mass),
-                np.concatenate(owners), np.concatenate(local_i), np.concatenate(locked))
+        self._sync_world_pv(w)
+        locked = w['locked']
+        locked.fill(False)
+        for bi, off, n in w['slices']:
+            body = self.bodies[bi]
+            if body.static is not None:
+                locked[off:off + n] = body.static
+        return (w['pos'], w['vel'], w['mass'],
+                w['body_idx'], w['part_idx'], locked)
 
     def _unpack_velocities(self, world_vel):
-        offset = 0
-        for b in self.bodies:
-            if b.pos is None:
-                continue
-            n = b.n_particles
-            b.vel = world_vel[offset:offset + n].astype(np.float32)
-            offset += n
+        w = self._world
+        if w is None:
+            offset = 0
+            for b in self.bodies:
+                if b.pos is None:
+                    continue
+                n = b.n_particles
+                b.vel = world_vel[offset:offset + n].astype(np.float32)
+                offset += n
+            return
+        if world_vel is not w['vel']:
+            w['vel'][...] = world_vel
+        self._writeback_world_pv(w, write_pos=False, write_vel=True)
 
     def _apply_detonations(self, dt):
         """Detonation front + PdV work from the products.
@@ -473,57 +592,23 @@ class PhysicsEngine:
     def _handle_collisions(self, dt):
         bodies = self.bodies
         col_dist = self.collision_dist
-
-        pos_list, vel_list, mass_list = [], [], []
-        body_idx_list, part_idx_list = [], []
-        body_types = []
-        spacings = []
-        # Per-body material scalars, expanded to per-particle arrays below
-        b_strength, b_restitution, b_youngs, b_friction = [], [], [], []
-        b_init_vel = []
-
-        for bi, body in enumerate(bodies):
-            if body.pos is None:
-                continue
-            n = body.n_particles
-            pos_list.append(body.pos)
-            vel_list.append(body.vel)
-            mass_list.append(body.mass)
-            body_idx_list.append(np.full(n, bi, dtype=np.int32))
-            part_idx_list.append(np.arange(n, dtype=np.int32))
-            mat = MATERIALS[body.material]
-            b_strength.append(np.full(n, mat['strength'], dtype=np.float64))
-            b_restitution.append(np.full(n, mat['restitution'], dtype=np.float64))
-            b_youngs.append(np.full(n, mat['youngs_modulus'], dtype=np.float64))
-            b_friction.append(np.full(n, mat['friction_coeff'], dtype=np.float64))
-            b_init_vel.append(np.full(
-                n, mat.get('initiation_velocity', 0.0) if mat.get('explosive') else 0.0,
-                dtype=np.float64))
-            body_types.append(body.body_type)
-            spacings.append(getattr(body, 'particle_spacing', col_dist))
-
-        if not pos_list:
+        w = self._ensure_world()
+        if w is None:
             return
 
-        all_pos = np.vstack(pos_list).astype(np.float64)
-        all_vel = np.vstack(vel_list).astype(np.float64)
-        all_mass = np.concatenate(mass_list).astype(np.float64)
-        all_body_idx = np.concatenate(body_idx_list)
-        all_part_idx = np.concatenate(part_idx_list)
-        p_strength = np.concatenate(b_strength)
-        p_restitution = np.concatenate(b_restitution)
-        p_youngs = np.concatenate(b_youngs)
-        p_friction = np.concatenate(b_friction)
-        p_init_vel = np.concatenate(b_init_vel)
-
-        # 1 = penetrator, 0 = armor/other  (for vectorized pen-armor detection)
-        # Build per-body lookup first, then index by all_body_idx — avoids a
-        # Python loop over every particle.
-        _is_pen_lut = np.array([1 if bt == 'penetrator' else 0
-                                 for bt in body_types], dtype=np.int8)
-        _spacing_lut = np.array(spacings)
-        p_is_pen   = _is_pen_lut[all_body_idx]
-        p_spacing  = _spacing_lut[all_body_idx]
+        self._sync_world_pv(w)
+        all_pos = w['pos']
+        all_vel = w['vel']
+        all_mass = w['mass']
+        all_body_idx = w['body_idx']
+        all_part_idx = w['part_idx']
+        p_strength = w['strength']
+        p_restitution = w['restitution']
+        p_youngs = w['youngs']
+        p_friction = w['friction']
+        p_init_vel = w['init_vel']
+        p_is_pen = w['is_pen']
+        p_spacing = w['spacing']
 
         # --- Pair finding: cKDTree is C-level, far faster than Python cell loop ---
         tree = cKDTree(all_pos)
@@ -552,22 +637,14 @@ class PhysicsEngine:
         # spring breaks it is removed from body.springs, so the pair re-enters collision.
         sb_idx = np.where(same_body & valid)[0]
         if len(sb_idx):
-            # Encode each spring pair as (lo * N_max + hi) for fast vectorized
-            # membership testing with np.isin instead of a Python loop.
-            N_max = max(b.n_particles for b in bodies if b.pos is not None)
-            body_spring_encoded = {}
-            for bi, body in enumerate(bodies):
-                if body.pos is not None and body.springs is not None and len(body.springs) > 0:
-                    s = body.springs
-                    lo = np.minimum(s[:, 0], s[:, 1]).astype(np.int64)
-                    hi = np.maximum(s[:, 0], s[:, 1]).astype(np.int64)
-                    body_spring_encoded[bi] = lo * N_max + hi
+            n_max = w['n_max']
+            body_spring_encoded = self._cached_spring_encoded(w)
             li_arr = all_part_idx[ii[sb_idx]]
             lj_arr = all_part_idx[jj[sb_idx]]
             bk_arr = bi_arr[sb_idx]
             lo_pairs = np.minimum(li_arr, lj_arr).astype(np.int64)
             hi_pairs = np.maximum(li_arr, lj_arr).astype(np.int64)
-            pair_encoded = lo_pairs * N_max + hi_pairs
+            pair_encoded = lo_pairs * n_max + hi_pairs
             for bi, encoded in body_spring_encoded.items():
                 body_mask = bk_arr == bi
                 if not np.any(body_mask):
@@ -699,12 +776,4 @@ class PhysicsEngine:
                 body.active[all_part_idx[ii[bi_arr == body_id]]] = True
                 body.active[all_part_idx[jj[bj_arr == body_id]]] = True
 
-        # Write back positions and velocities
-        offset = 0
-        for body in bodies:
-            if body.pos is None:
-                continue
-            n = body.n_particles
-            body.pos = all_pos[offset:offset + n].astype(np.float32)
-            body.vel = all_vel[offset:offset + n].astype(np.float32)
-            offset += n
+        self._writeback_world_pv(w)
