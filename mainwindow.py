@@ -290,7 +290,7 @@ class MainWindow(QMainWindow):
         row2.addWidget(self.ortho_btn)
 
         self.view_combo = QComboBox()
-        self.view_combo.addItems(["Perspective", "Front", "Right", "Top"])
+        self.view_combo.addItems(["Perspective", "Side", "Front", "Top"])
         self.view_combo.currentTextChanged.connect(self.set_view_preset)
         self.view_combo.setMinimumWidth(110)
         row2.addWidget(self.view_combo)
