@@ -4,6 +4,8 @@
 
 **Run:** `pip install -r requirements.txt` then `python armorsim_qt.py`
 
+**Windows exe:** `build_release.bat` (needs Python 3.11+). Output is `dist\ArmorSim.exe`. Upload that file to a GitHub Release.
+
 ---
 
 ## Technologies
