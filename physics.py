@@ -16,6 +16,8 @@ class PhysicsEngine:
         self.impact_occurred = False
         self.impact_start_x = None
         self.max_penetration = 0.0
+        # Active ERA detonations (one per explosive body, once initiated).
+        self.detonations = []
         # Precomputed contact-area constant (depends only on collision_dist).
         self._ca = np.pi * (self.collision_dist * 0.5) ** 2
 
@@ -25,6 +27,7 @@ class PhysicsEngine:
         
         self.impact_start_x = None
         self.max_penetration = 0.0
+        self._clear_detonations()
         for body in self.bodies:
             body.pos = body.rest_pos.copy()
             body.vel.fill(0)
@@ -48,6 +51,127 @@ class PhysicsEngine:
             else:
                 if body.active is not None:
                     body.active.fill(False)
+
+    def _clear_detonations(self):
+        for det in self.detonations:
+            body = det['body']
+            backup = det.get('static_backup')
+            if (backup is not None and body.static is not None
+                    and len(backup) == len(body.static)):
+                body.static = backup.copy()
+            body.burnt = None
+        self.detonations = []
+
+    def _initiate_detonation(self, body_idx, origin):
+        """Register a detonation in an explosive body struck hard enough to shock-initiate.
+
+        Flyer-plate speeds come from the Gurney symmetric-sandwich result
+        V = √(2E) / √(2M/C + 1/3), with M the free mass of the plate on one face and
+        C the charge mass. Asymmetric cassettes use each face's own M, which is the
+        standard engineering approximation.
+        """
+        body = self.bodies[body_idx]
+        mat = MATERIALS[body.material]
+        pos = body.pos.astype(np.float64)
+        centroid = pos.mean(axis=0)
+
+        # Layer normal = thinnest principal axis of the slab, so the plates are
+        # thrown along the cassette normal whatever angle the user set.
+        _, eigvecs = np.linalg.eigh(np.cov((pos - centroid).T))
+        normal = eigvecs[:, 0]
+        normal = normal / max(np.linalg.norm(normal), 1e-12)
+
+        charge_mass = max(float(np.sum(body.mass)), 1e-12)
+        gurney_v = float(mat.get('gurney_velocity', 2700.0))
+
+        # Bodies touching the charge are the flyer plates. The penetrator is excluded:
+        # it is disrupted by being hit by the plates and products, not thrown by them.
+        exp_tree = cKDTree(body.pos)
+        coupling = self.collision_dist * 1.5
+        plates, side_mass = {}, {1.0: 0.0, -1.0: 0.0}
+        for bj, other in enumerate(self.bodies):
+            if bj == body_idx or other.pos is None or other.body_type == 'penetrator':
+                continue
+            d, _ = exp_tree.query(other.pos, distance_upper_bound=coupling)
+            if not np.any(np.isfinite(d)):
+                continue
+            side = 1.0 if np.dot(other.pos.mean(axis=0) - centroid, normal) >= 0 else -1.0
+            free = other.mass if other.static is None else other.mass[~other.static]
+            plates[bj] = {'side': side}
+            side_mass[side] += float(np.sum(free))
+
+        def plate_velocity(m):
+            # A plate can never outrun the Gurney velocity, which the formula would
+            # otherwise predict for M/C < 1/3 (an effectively open face).
+            return min(gurney_v, gurney_v / np.sqrt(2.0 * m / charge_mass + 1.0 / 3.0))
+
+        body.burnt = np.zeros(body.n_particles, dtype=bool)
+        self.detonations.append({
+            'body': body,
+            'body_idx': body_idx,
+            'origin': np.asarray(origin, dtype=np.float64),
+            'centroid': centroid,
+            'normal': normal,
+            'half_thickness': max(float(np.max(np.abs((pos - centroid) @ normal))), 1e-6),
+            'radius': 0.0,
+            'd_vel': float(mat.get('detonation_velocity', 7900.0)),
+            'v_plus': plate_velocity(side_mass[1.0]),
+            'v_minus': plate_velocity(side_mass[-1.0]),
+            'plates': plates,
+            'pushed': {bj: np.zeros(self.bodies[bj].n_particles, dtype=bool)
+                       for bj in plates},
+            'static_backup': None if body.static is None else body.static.copy(),
+        })
+
+    def _apply_detonations(self, dt):
+        """Sweep the detonation front outward, gassing the charge and throwing the plates."""
+        for det in self.detonations:
+            body = det['body']
+            burnt = getattr(body, 'burnt', None)
+            if body.pos is None or burnt is None or len(burnt) != body.n_particles:
+                continue
+
+            det['radius'] += det['d_vel'] * dt
+            radius = det['radius']
+            origin, normal = det['origin'], det['normal']
+
+            reached = np.linalg.norm(body.pos - origin, axis=1) <= radius
+            newly = reached & ~burnt
+            if np.any(newly):
+                burnt |= newly
+                # Detonation products carry no tensile strength.
+                if body.springs is not None and len(body.springs) > 0:
+                    keep = ~(burnt[body.springs[:, 0]] | burnt[body.springs[:, 1]])
+                    body.springs = body.springs[keep]
+                    body.spring_rest = body.spring_rest[keep]
+                    body.spring_rest_original = body.spring_rest_original[keep]
+                    body.spring_stiff = body.spring_stiff[keep]
+                if body.static is not None:
+                    body.static[newly] = False
+                # Gurney's linear gas profile: products are at rest on the stagnation
+                # plane at mid-thickness and match the plate speed at each face, so the
+                # middle of the charge lingers in the penetrator's path.
+                proj = (body.pos[newly] - det['centroid']) @ normal
+                sgn = np.where(proj >= 0, 1.0, -1.0)
+                frac = np.clip(np.abs(proj) / det['half_thickness'], 0.0, 1.0)
+                v_mag = np.where(sgn > 0, det['v_plus'], det['v_minus']) * frac
+                body.vel[newly] = ((sgn * v_mag)[:, np.newaxis] * normal).astype(np.float32)
+
+            for bj, info in det['plates'].items():
+                other = self.bodies[bj]
+                pushed = det['pushed'][bj]
+                if other.pos is None or len(pushed) != other.n_particles:
+                    continue
+                newp = (np.linalg.norm(other.pos - origin, axis=1) <= radius) & ~pushed
+                if other.static is not None:
+                    newp &= ~other.static
+                if not np.any(newp):
+                    continue
+                pushed |= newp
+                v = det['v_plus'] if info['side'] > 0 else det['v_minus']
+                other.vel[newp] += (info['side'] * v * normal).astype(np.float32)
+                if other.active is not None:
+                    other.active[newp] = True
 
     def _propagate_active(self, body):
         if body.springs is None or len(body.springs) == 0:
@@ -84,6 +208,9 @@ class PhysicsEngine:
 
             self._handle_collisions(sub_dt)
 
+            if self.detonations:
+                self._apply_detonations(sub_dt)
+
             for body in self.bodies:
                 if body.active is not None:
                     self._propagate_active(body)
@@ -113,7 +240,8 @@ class PhysicsEngine:
                         body.pos[mask] += rot_disp[mask]
 
         self.time += real_dt
-        stats = {'time_us': self.time * 1e6, 'vel': 0, 'pen': 0}
+        stats = {'time_us': self.time * 1e6, 'vel': 0, 'pen': 0,
+                 'detonated': bool(self.detonations)}
         for b in self.bodies:
             if b.body_type == 'penetrator':
                 stats['vel'] = np.mean(np.sqrt(np.sum(b.vel ** 2, axis=1)))
@@ -300,6 +428,7 @@ class PhysicsEngine:
         spacings = []
         # Per-body material scalars, expanded to per-particle arrays below
         b_strength, b_restitution, b_youngs, b_friction = [], [], [], []
+        b_init_vel = []
 
         for bi, body in enumerate(bodies):
             if body.pos is None:
@@ -315,6 +444,9 @@ class PhysicsEngine:
             b_restitution.append(np.full(n, mat['restitution'], dtype=np.float64))
             b_youngs.append(np.full(n, mat['youngs_modulus'], dtype=np.float64))
             b_friction.append(np.full(n, mat['friction_coeff'], dtype=np.float64))
+            b_init_vel.append(np.full(
+                n, mat.get('initiation_velocity', 0.0) if mat.get('explosive') else 0.0,
+                dtype=np.float64))
             body_types.append(body.body_type)
             spacings.append(getattr(body, 'particle_spacing', col_dist))
 
@@ -330,6 +462,7 @@ class PhysicsEngine:
         p_restitution = np.concatenate(b_restitution)
         p_youngs = np.concatenate(b_youngs)
         p_friction = np.concatenate(b_friction)
+        p_init_vel = np.concatenate(b_init_vel)
 
         # 1 = penetrator, 0 = armor/other  (for vectorized pen-armor detection)
         # Build per-body lookup first, then index by all_body_idx — avoids a
@@ -425,6 +558,26 @@ class PhysicsEngine:
                 if body.body_type == 'armor':
                     self.impact_start_x = np.min(body.pos[:, 0])
                     break
+
+        # --- ERA initiation: charge shocked hard enough by whatever reaches it ---
+        # Gated on the impactor's own speed, not the pair separation speed: shock
+        # initiation is driven by impact velocity, and a charge merely resting against
+        # its cassette plates must never light off.
+        thresh = np.maximum(p_init_vel[ii], p_init_vel[jj])
+        cand = np.where((thresh > 0) & (~same_body) & (vel_normal > 0))[0]
+        if len(cand):
+            exp_is_i = p_init_vel[ii[cand]] > 0
+            striker = np.where(exp_is_i, jj[cand], ii[cand])
+            hot = cand[np.linalg.norm(all_vel[striker], axis=1) > thresh[cand]]
+            if len(hot):
+                already = {d['body_idx'] for d in self.detonations}
+                exp_body = np.where(p_init_vel[ii[hot]] > 0, bi_arr[hot], bj_arr[hot])
+                for exp_bi in np.unique(exp_body):
+                    if exp_bi in already:
+                        continue
+                    first = hot[exp_body == exp_bi][0]
+                    self._initiate_detonation(
+                        int(exp_bi), 0.5 * (all_pos[ii[first]] + all_pos[jj[first]]))
 
         # --- Position corrections (vectorized) ---
         contact_stiff = np.clip(np.sqrt(s_sum / (2.0 * 800e6)), 0.5, 1.5)

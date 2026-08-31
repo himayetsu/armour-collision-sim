@@ -28,6 +28,8 @@ NAME_TO_MATERIAL = {m['name']: key for key, m in MATERIALS.items()}
 # Shared velocity colormap used by both 3D scatter and the legend widget.
 # (t=0 → slow/blue, t=1 → fast/red)
 VEL_MAX = 1800.0
+# Detonation products of a reacted ERA charge
+DETONATION_COLOR = np.array([1.0, 0.85, 0.35], dtype=np.float32)
 VEL_STOPS_T = np.array([0.00, 0.20, 0.40, 0.60, 0.80, 1.00], dtype=np.float32)
 VEL_STOPS_RGB = np.array([
     [0.10, 0.20, 1.00],  # dark blue  (0 m/s)
@@ -458,6 +460,9 @@ class MainWindow(QMainWindow):
         else:
             # Armor uses flat material color
             colors[:, :3] = MATERIALS[body.material]['color']
+            burnt = getattr(body, 'burnt', None)
+            if burnt is not None and len(burnt) == body.n_particles:
+                colors[burnt, :3] = DETONATION_COLOR
         colors[:, 3] = 1.0
         if body.selected:
             colors[:, :3] = np.clip(colors[:, :3] + 0.1, 0, 1)

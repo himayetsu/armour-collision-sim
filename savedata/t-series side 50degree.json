@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "bodies": [
+    {
+      "type": "penetrator",
+      "name": "Penetrator.001",
+      "material": "steel",
+      "particle_size": 0.004,
+      "length": 0.95,
+      "diameter": 0.01,
+      "initial_velocity": 7000.0,
+      "center": [
+        -0.9558392763137817,
+        -2.1392635926598125e-12,
+        -0.009840760380029678
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.003",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.3,
+      "height": 0.1,
+      "thickness": 0.1,
+      "angle": -50,
+      "center": [
+        1.4297254085540771,
+        0.0019999314099550247,
+        0.004909409210085869
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.004",
+      "material": "high_hardness_steel",
+      "particle_size": 0.005,
+      "width": 0.25,
+      "height": 0.1,
+      "thickness": 0.03,
+      "angle": -50,
+      "center": [
+        -0.04260506480932236,
+        0.0019998596981167793,
+        0.0032013836316764355
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.008",
+      "material": "boron_carbide",
+      "particle_size": 0.005,
+      "width": 0.2,
+      "height": 0.1,
+      "thickness": 0.02,
+      "angle": -50,
+      "center": [
+        -0.38810381293296814,
+        0.0020000231452286243,
+        0.003063463605940342
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.009",
+      "material": "high_hardness_steel",
+      "particle_size": 0.005,
+      "width": 0.2,
+      "height": 0.1,
+      "thickness": 0.01,
+      "angle": -50,
+      "center": [
+        -0.3369580805301666,
+        0.0019998338539153337,
+        -0.0028060770127922297
+      ]
+    }
+  ]
+}

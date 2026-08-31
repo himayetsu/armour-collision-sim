@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "bodies": [
+    {
+      "type": "penetrator",
+      "name": "Penetrator.001",
+      "material": "depleted_uranium",
+      "particle_size": 0.004,
+      "length": 0.25,
+      "diameter": 0.015,
+      "initial_velocity": 1500.0,
+      "center": [
+        -0.12069381773471832,
+        3.9509524124570206e-12,
+        1.9728220793102658e-12
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.001",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.3,
+      "height": 0.14,
+      "thickness": 0.03,
+      "angle": 70,
+      "center": [
+        0.14433571696281433,
+        0.0020000473596155643,
+        -0.0013860873878002167
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.002",
+      "material": "boron_carbide",
+      "particle_size": 0.005,
+      "width": 0.3,
+      "height": 0.14,
+      "thickness": 0.03,
+      "angle": 70,
+      "center": [
+        0.2538563013076782,
+        0.0019999914802610874,
+        -0.0015451200306415558
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.003",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.3,
+      "height": 0.14,
+      "thickness": 0.03,
+      "angle": 70,
+      "center": [
+        0.36662596464157104,
+        0.0020000494550913572,
+        0.00018535120761953294
+      ]
+    }
+  ]
+}

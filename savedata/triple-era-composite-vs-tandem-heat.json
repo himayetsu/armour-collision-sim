@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "bodies": [
+    {
+      "type": "penetrator",
+      "name": "Penetrator.001",
+      "material": "steel",
+      "particle_size": 0.004,
+      "length": 0.95,
+      "diameter": 0.01,
+      "initial_velocity": 7000.0,
+      "center": [
+        -2.4350643157958984,
+        -2.1392885293097796e-12,
+        -0.0017080605030059814
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.001",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.28,
+      "height": 0.1,
+      "thickness": 0.03,
+      "angle": 60,
+      "center": [
+        0.4365447163581848,
+        0.002000059699639678,
+        -0.004485271871089935
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.002",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.28,
+      "height": 0.1,
+      "thickness": 0.03,
+      "angle": 60,
+      "center": [
+        0.15298619866371155,
+        0.002000059699639678,
+        0.0014933391939848661
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.003",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.18,
+      "height": 0.14,
+      "thickness": 0.038,
+      "angle": 10,
+      "center": [
+        0.6833697557449341,
+        0.002000007312744856,
+        0.004909657873213291
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.004",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.18,
+      "height": 0.14,
+      "thickness": 0.03,
+      "angle": 20,
+      "center": [
+        -0.042604248970746994,
+        0.001999989617615938,
+        0.003201433690264821
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.005",
+      "material": "boron_carbide",
+      "particle_size": 0.005,
+      "width": 0.2,
+      "height": 0.1,
+      "thickness": 0.02,
+      "angle": 60,
+      "center": [
+        -0.5297591686248779,
+        0.0019999206997454166,
+        0.0013487562537193298
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.006",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.2,
+      "height": 0.1,
+      "thickness": 0.01,
+      "angle": 60,
+      "center": [
+        -0.4605868458747864,
+        0.001999923028051853,
+        0.004978155251592398
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.007",
+      "material": "boron_carbide",
+      "particle_size": 0.005,
+      "width": 0.2,
+      "height": 0.1,
+      "thickness": 0.02,
+      "angle": 60,
+      "center": [
+        -1.0654659271240234,
+        0.0020000231452286243,
+        0.005794404074549675
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.008",
+      "material": "boron_carbide",
+      "particle_size": 0.005,
+      "width": 0.2,
+      "height": 0.1,
+      "thickness": 0.02,
+      "angle": 60,
+      "center": [
+        -0.7910682559013367,
+        0.0020000231452286243,
+        0.0030634701251983643
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.009",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.2,
+      "height": 0.1,
+      "thickness": 0.01,
+      "angle": 60,
+      "center": [
+        -0.736068606376648,
+        0.0019999388605356216,
+        -0.002806080272421241
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.010",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.2,
+      "height": 0.1,
+      "thickness": 0.01,
+      "angle": 60,
+      "center": [
+        -1.0209141969680786,
+        0.001999938627704978,
+        -0.0028060616459697485
+      ]
+    },
+    {
+      "type": "penetrator",
+      "name": "Penetrator.002",
+      "material": "steel",
+      "particle_size": 0.004,
+      "length": 0.5,
+      "diameter": 0.01,
+      "initial_velocity": 6000.0,
+      "center": [
+        -1.4260457754135132,
+        -3.301283899026508e-11,
+        -1.0442489836162347e-14
+      ]
+    }
+  ]
+}

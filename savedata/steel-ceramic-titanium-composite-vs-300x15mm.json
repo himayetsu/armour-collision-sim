@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "bodies": [
+    {
+      "type": "penetrator",
+      "name": "Penetrator.001",
+      "material": "depleted_uranium",
+      "particle_size": 0.004,
+      "length": 0.3,
+      "diameter": 0.015,
+      "initial_velocity": 1400.0,
+      "center": [
+        -0.36680787801742554,
+        -1.4359730852314678e-12,
+        -8.108477659220456e-18
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.001",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.2,
+      "height": 0.1,
+      "thickness": 0.04,
+      "angle": 60,
+      "center": [
+        0.006486755330115557,
+        0.0020000215154141188,
+        -0.0008719165343791246
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.002",
+      "material": "boron_carbide",
+      "particle_size": 0.005,
+      "width": 0.2,
+      "height": 0.1,
+      "thickness": 0.02,
+      "angle": 60,
+      "center": [
+        0.28138965368270874,
+        0.0020000182557851076,
+        0.0010053823934867978
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.003",
+      "material": "titanium",
+      "particle_size": 0.005,
+      "width": 0.2,
+      "height": 0.1,
+      "thickness": 0.02,
+      "angle": 60,
+      "center": [
+        0.1960689276456833,
+        0.0020000182557851076,
+        -0.001649643061682582
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.004",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.11,
+      "height": 0.1,
+      "thickness": 0.038,
+      "angle": -30,
+      "center": [
+        0.4325709939002991,
+        0.00200000056065619,
+        -0.0020492575131356716
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.005",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.2,
+      "height": 0.1,
+      "thickness": 0.007,
+      "angle": 60,
+      "center": [
+        0.6002192497253418,
+        0.0019999321084469557,
+        0.00089405378093943
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.006",
+      "material": "adamantium",
+      "particle_size": 0.005,
+      "width": 0.6,
+      "height": 0.1,
+      "thickness": 0.007,
+      "angle": 90,
+      "center": [
+        0.3947352170944214,
+        0.0019998312927782536,
+        0.07734035700559616
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.007",
+      "material": "adamantium",
+      "particle_size": 0.005,
+      "width": 0.6,
+      "height": 0.1,
+      "thickness": 0.007,
+      "angle": 90,
+      "center": [
+        0.24666015803813934,
+        0.0019998312927782536,
+        -0.0768079161643982
+      ]
+    }
+  ]
+}

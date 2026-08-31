@@ -76,6 +76,24 @@ MATERIALS = {
         'stiffness_scale': 1.3e-3, # HV ~746 (60 HRC); 746×(6e-4/345) = 1.3e-3
         'color': np.array([0.55, 0.52, 0.58])
     },
+    'copper_jet': {
+        'name': 'Copper (HEAT jet)',
+        'role': 'penetrator',
+        'density': 8960,           # OFHC copper: 8.96 g/cm³
+        'strength': 190e6,         # OFHC-Cu jet flow stress: 193 MPa theory / 144 MPa from fragment hardness (Appl.Sci. 2023 13:5128)
+        'youngs_modulus': 117e9,   # annealed OFHC: 110-128 GPa
+        'restitution': 0.032,      # very plastic; a jet does not rebound, it flows
+        'hardness': 2.3,           # HV ~50 annealed OFHC (Mohs 3); softer than Al 5083
+        'poisson_ratio': 0.34,
+        'friction_coeff': 0.45,    # Cu on steel, dry: 0.36-0.53
+        'breaking_strain': 0.55,   # OFE copper jet elongation at failure ~0.55 before particulation (Petit et al. J.Appl.Phys 2005)
+        'yield_strain': 0.0016,    # 190 MPa dynamic flow / 117 GPa; yields almost immediately = hydrodynamic stretching
+        'compression_limit': 0.42,
+        'spring_min_ratio': 0.74,  # floor = 0.532 + 0.0425×ln(K); K = 122 GPa (E=117, ν=0.34)
+        'shear_boost': 2.1,        # G = E/(2(1+ν)) = 117/(2×1.34) = 43.7 GPa → G/E = 0.373
+        'stiffness_scale': 8.7e-5, # HV ~50; 50×(6e-4/345) = 8.7e-5
+        'color': np.array([0.85, 0.45, 0.20])
+    },
     'steel': {
         'name': 'RHA Steel',
         'role': 'both',
@@ -187,6 +205,25 @@ MATERIALS = {
         'stiffness_scale': 2.5e-3, # reduced from HV-based 4.3e-3 for same stability reason as B4C
         'color': np.array([0.65, 0.68, 0.66])
     },
+    'glass': {
+        'name': 'Glass (soda-lime)',
+        'role': 'armor',
+        'density': 2500,           # soda-lime float glass: 2500 kg/m³ (Pilkington ATS-129, AGC)
+        'strength': 1700e6,        # dynamic compressive strength 1.7 GPa (ARL-TR-9120); quasi-static 1.3-1.5 GPa
+        'youngs_modulus': 72e9,    # 71.7-72 GPa (glass.org FM05-12, Pilkington)
+        'restitution': 0.020,
+        'hardness': 5.5,           # Mohs 5-6; Knoop 470-605 kg/mm², HV ~470
+        'poisson_ratio': 0.22,     # 0.20-0.23 across datasheets
+        'friction_coeff': 0.55,    # glass on steel, dry: ~0.5-0.6
+        'breaking_strain': 0.0006, # annealed MOR 41 MPa / 72 GPa; glass fails in tension at flaw sites
+        'yield_strain': 0.0006,    # no plastic zone — fracture = yield
+        'compression_breaking_strain': 0.024,  # 1700 MPa / 72 GPa; comminutes into rubble under contact load
+        'compression_limit': 0.60,
+        'spring_min_ratio': 0.69,  # floor = 0.532 + 0.0425×ln(K); K = 42.9 GPa (E=72, ν=0.22)
+        'shear_boost': 2.4,        # G = 29.6 GPa (glass.org) → G/E = 0.413
+        'stiffness_scale': 8.2e-4, # HV ~470; 470×(6e-4/345) = 8.2e-4
+        'color': np.array([0.72, 0.86, 0.88])
+    },
     'titanium': {
         'name': 'Titanium (Ti-6Al-4V)',
         'role': 'armor',
@@ -240,6 +277,28 @@ MATERIALS = {
         'shear_boost': 2.0,        # G = E/(2(1+ν)) = 100/(2×1.42) = 35 GPa → G/E = 0.352
         'stiffness_scale': 9e-6,   # Shore D ~62 → HV ~5 (very rough); 5×(6e-4/345) ≈ 9e-6; extremely compliant
         'color': np.array([0.92, 0.93, 0.95])
+    },
+    'era_filler': {
+        'name': 'ERA Filler (PBX)',
+        'role': 'armor',
+        'density': 1830,           # PBX 9501 (94.9% HMX / Estane-BDNPA-F binder): 1.83 g/cm³ (LANL)
+        'strength': 59e6,          # dynamic peak compressive flow stress 59 MPa; 12 MPa quasi-static (OSTI 783223)
+        'youngs_modulus': 1.1e9,   # 0.97-1.15 GPa at 10⁻³ s⁻¹, room temperature
+        'restitution': 0.035,      # viscoelastic putty — absorbs rather than rebounds
+        'hardness': 1.0,           # waxy pressed HMX/binder; softer than any metal or polymer laminate here
+        'poisson_ratio': 0.48,     # near-incompressible: K = 11.4 GPa with E = 1.1 GPa (LANL viscoelastic model)
+        'friction_coeff': 0.40,
+        'explosive': True,         # detonates when shocked; drives the Gurney flyer-plate mechanic
+        'detonation_velocity': 8810,   # PBX 9501 thermodynamic D_CJ = 8.81 km/s (Prop.Expl.Pyro. 2023)
+        'gurney_velocity': 2900,       # √(2E) ≈ 2.9 km/s from W-76 cylinder tests (OSTI 639796)
+        'initiation_velocity': 400,    # impact this fast drives ~2-3 GPa into the charge, above the PBX 9501 Pop-plot threshold
+        'breaking_strain': 0.007,  # tensile response far weaker than compressive; tears below 1% strain
+        'yield_strain': 0.005,     # crushes plastically well before failure in compression
+        'compression_limit': 0.30,
+        'spring_min_ratio': 0.64,  # floor = 0.532 + 0.0425×ln(K); K = 11.4 GPa
+        'shear_boost': 1.9,        # G = E/(2(1+ν)) = 1.1/(2×1.48) = 0.37 GPa → G/E = 0.338
+        'stiffness_scale': 2.6e-5, # HV ~15; 15×(6e-4/345) = 2.6e-5
+        'color': np.array([0.80, 0.62, 0.35])
     },
     'adamantium': {
         'name': 'Adamantium',
