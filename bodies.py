@@ -121,7 +121,7 @@ def create_cylinder_body(length, diameter, material, spacing=None):
     return pos, vel, mass, spring_indices, spring_rest, spring_stiff
 
 
-def create_plate_body(width, height, thickness, angle_deg, material, spacing=None):
+def create_plate_body(width, height, thickness, angle_deg, material, spacing=None, anchored=True):
     if spacing is None:
         spacing = float(np.clip(min(thickness / 2.5, width / 10.0, height / 10.0), 0.007, 0.012))
     mat = MATERIALS[material]
@@ -143,7 +143,7 @@ def create_plate_body(width, height, thickness, angle_deg, material, spacing=Non
                 rx = z * cos_a + x * sin_a
                 rz = -z * sin_a + x * cos_a
                 particles.append([rx + 0.22, y, rz])
-                is_static = (ix == 0 or ix == nx - 1 or iy == 0 or iy == ny - 1)
+                is_static = anchored and (ix == 0 or ix == nx - 1 or iy == 0 or iy == ny - 1)
                 static_particles.append(is_static)
 
     pos = np.array(particles, dtype=np.float32)
@@ -233,6 +233,7 @@ class ArmorPlate(SoftBody):
         self.thickness = 0.038
         self.angle = 60
         self.particle_size = 0.005
+        self.anchored = True
         self.rebuild()
 
     def rebuild(self):
@@ -240,12 +241,13 @@ class ArmorPlate(SoftBody):
         spacing = float(np.clip(min(self.thickness / 2.5, self.width / 10.0, self.height / 10.0), 0.007, 0.012))
         self.particle_spacing = spacing
         pos, vel, mass, springs, rest, stiff, static = create_plate_body(
-            self.width, self.height, self.thickness, self.angle, self.material, spacing=spacing)
+            self.width, self.height, self.thickness, self.angle, self.material,
+            spacing=spacing, anchored=self.anchored)
         self.pos = pos
         self.vel = vel
         self.rest_pos = pos.copy()
         self.mass = mass
-        self.static = static
+        self.static = static if self.anchored else None
         self.springs = springs
         self.spring_rest = rest
         self.spring_rest_original = rest.copy()

@@ -196,9 +196,14 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(btn_armor)
         scene_l.addLayout(btn_row)
 
+        dup_del_row = QHBoxLayout()
+        btn_dup = QPushButton("Duplicate")
+        btn_dup.clicked.connect(self.duplicate_selected)
         btn_del = QPushButton("Delete")
         btn_del.clicked.connect(self.delete_selected)
-        scene_l.addWidget(btn_del)
+        dup_del_row.addWidget(btn_dup)
+        dup_del_row.addWidget(btn_del)
+        scene_l.addLayout(dup_del_row)
 
         io_row = QHBoxLayout()
         btn_export = QPushButton("Export Layout")
@@ -565,6 +570,11 @@ class MainWindow(QMainWindow):
                        lambda v: self.change_dim(body, 'thickness', v / 1000), dl)
             self._spin("Angle (°)", -90, 90, body.angle,
                        lambda v: self.change_dim(body, 'angle', v), dl)
+            anchored_cb = QCheckBox("Anchored")
+            anchored_cb.setChecked(getattr(body, 'anchored', True))
+            anchored_cb.setToolTip("When on, edge particles stay fixed. When off, the whole plate is free.")
+            anchored_cb.toggled.connect(lambda on: self.change_anchored(body, on))
+            dl.addWidget(anchored_cb)
         self.props_box.addWidget(dim)
 
     def _spin(self, label, mn, mx, val, cb, layout, step=1):
@@ -601,6 +611,43 @@ class MainWindow(QMainWindow):
             body.rebuild()
             self.rebuild_visuals(body)
 
+    def change_anchored(self, body, anchored):
+        body.anchored = bool(anchored)
+        body.rebuild()
+        self.rebuild_visuals(body)
+
+    def duplicate_selected(self):
+        src = self.selected
+        if src is None:
+            return
+        if src.body_type == 'penetrator':
+            n = len([b for b in self.physics.bodies if b.body_type == 'penetrator'])
+            dup = Penetrator(f"Penetrator.{n + 1:03d}")
+            dup.material = src.material
+            dup.length = src.length
+            dup.diameter = src.diameter
+            dup.initial_velocity = src.initial_velocity
+            dup.particle_size = src.particle_size
+        else:
+            n = len([b for b in self.physics.bodies if b.body_type == 'armor'])
+            dup = ArmorPlate(f"Armor.{n + 1:03d}")
+            dup.material = src.material
+            dup.width = src.width
+            dup.height = src.height
+            dup.thickness = src.thickness
+            dup.angle = src.angle
+            dup.particle_size = src.particle_size
+            dup.anchored = getattr(src, 'anchored', True)
+        dup.rebuild()
+        offset = np.mean(src.pos, axis=0) - np.mean(dup.pos, axis=0)
+        offset[1] += 0.04
+        dup.pos += offset
+        dup.rest_pos += offset
+        self.physics.bodies.append(dup)
+        self.create_visuals(dup)
+        self.update_tree()
+        self.select_body(dup)
+
     def export_layout(self):
         path, _ = QFileDialog.getSaveFileName(self, "Export Layout", "./savedata", "Layout Files (*.json)")
         if not path:
@@ -625,6 +672,7 @@ class MainWindow(QMainWindow):
                     'height': body.height,
                     'thickness': body.thickness,
                     'angle': body.angle,
+                    'anchored': getattr(body, 'anchored', True),
                 })
             entry['center'] = np.mean(body.pos, axis=0).tolist()
             bodies_data.append(entry)
@@ -680,6 +728,7 @@ class MainWindow(QMainWindow):
                 body.thickness = entry['thickness']
                 body.angle = entry['angle']
                 body.particle_size = entry.get('particle_size', body.particle_size)
+                body.anchored = entry.get('anchored', True)
             body.rebuild()
             if 'center' in entry:
                 saved = np.array(entry['center'], dtype=np.float32)
