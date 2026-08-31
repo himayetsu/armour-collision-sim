@@ -26,6 +26,14 @@ PROJ_AXES = {
     'top':   (0, 2, 'X', 'Z'),
 }
 
+# Internal camera keys stay front/right; labels match armor looking-direction.
+VIEW_LABELS = {
+    'perspective': 'Perspective',
+    'front': 'Side',
+    'right': 'Front',
+    'top': 'Top',
+}
+
 
 class SimViewWidget(gl.GLViewWidget):
     def __init__(self, parent=None, mode='perspective'):
@@ -41,7 +49,7 @@ class SimViewWidget(gl.GLViewWidget):
         self._drag_pos0 = None
         self._drag_rest0 = None
 
-        self._view_label = QLabel(mode.capitalize() if mode != 'perspective' else 'Perspective', self)
+        self._view_label = QLabel(VIEW_LABELS.get(mode, mode.capitalize()), self)
         self._view_label.setStyleSheet(
             "color: #6af; background: rgba(0,0,0,120); font-size: 11px; padding: 3px 6px;")
         self._view_label.move(6, 6)
@@ -200,7 +208,7 @@ class SimViewWidget(gl.GLViewWidget):
         else:
             super().keyPressEvent(ev)
             return
-        lbl = self.view_mode.capitalize() if self.view_mode != 'perspective' else 'Perspective'
+        lbl = VIEW_LABELS.get(self.view_mode, self.view_mode.capitalize())
         if self.ortho and self.view_mode == 'perspective':
             lbl = 'Ortho'
         self._view_label.setText(lbl)
@@ -216,7 +224,7 @@ class OrthoCanvas(QWidget):
         self.setMinimumSize(100, 100)
         self.setStyleSheet("background: #16181c;")
 
-        self._label = QLabel(mode.capitalize(), self)
+        self._label = QLabel(VIEW_LABELS.get(mode, mode.capitalize()), self)
         self._label.setStyleSheet(
             "color: #6af; background: rgba(0,0,0,120); font-size: 11px; padding: 3px 6px;")
         self._label.move(6, 6)

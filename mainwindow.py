@@ -18,7 +18,7 @@ import pyqtgraph.opengl as gl
 
 from physics import PhysicsEngine
 from bodies import Penetrator, ArmorPlate
-from views import SimViewWidget, OrthoCanvas
+from views import SimViewWidget, OrthoCanvas, VIEW_LABELS
 from gizmo import TransformGizmo
 from materials import MATERIALS
 
@@ -290,7 +290,7 @@ class MainWindow(QMainWindow):
         row2.addWidget(self.ortho_btn)
 
         self.view_combo = QComboBox()
-        self.view_combo.addItems(["Perspective", "Side", "Front", "Top"])
+        self.view_combo.addItems(["Perspective", "Front", "Side", "Top"])
         self.view_combo.currentTextChanged.connect(self.set_view_preset)
         self.view_combo.setMinimumWidth(110)
         row2.addWidget(self.view_combo)
@@ -331,15 +331,16 @@ class MainWindow(QMainWindow):
         self.view.view_mode = 'perspective' if not self.view.ortho else self.view.view_mode
         self.view._view_label.setText(lbl)
         self.view_combo.blockSignals(True)
-        self.view_combo.setCurrentText('Perspective' if not self.view.ortho else 'Front')
+        self.view_combo.setCurrentText(
+            'Perspective' if not self.view.ortho else VIEW_LABELS.get(self.view.view_mode, 'Side'))
         self.view_combo.blockSignals(False)
         self.view.repaint()
 
     def set_view_preset(self, name):
         presets = {
             'Perspective': {'ortho': False, 'elevation': 15, 'azimuth': 90, 'mode': 'perspective'},
-            'Front':       {'ortho': True,  'elevation': 0,  'azimuth': 90, 'mode': 'front'},
-            'Right':       {'ortho': True,  'elevation': 0,  'azimuth': 0,  'mode': 'right'},
+            'Side':        {'ortho': True,  'elevation': 0,  'azimuth': 90, 'mode': 'front'},
+            'Front':       {'ortho': True,  'elevation': 0,  'azimuth': 0,  'mode': 'right'},
             'Top':         {'ortho': True,  'elevation': 90, 'azimuth': 90, 'mode': 'top'},
         }
         p = presets.get(name)
