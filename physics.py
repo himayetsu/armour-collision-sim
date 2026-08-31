@@ -59,87 +59,91 @@ class PhysicsEngine:
             if (backup is not None and body.static is not None
                     and len(backup) == len(body.static)):
                 body.static = backup.copy()
+            mass_backup = getattr(body, '_mass_backup', None)
+            if mass_backup is not None and len(mass_backup) == len(body.mass):
+                body.mass = mass_backup.copy()
             body.burnt = None
+            body.blast_energy = None
         self.detonations = []
 
     def _initiate_detonation(self, body_idx, origin):
-        """Register a detonation in an explosive body struck hard enough to shock-initiate.
-
-        Flyer-plate speeds come from the Gurney symmetric-sandwich result
-        V = √(2E) / √(2M/C + 1/3), with M the free mass of the plate on one face and
-        C the charge mass. Asymmetric cassettes use each face's own M, which is the
-        standard engineering approximation.
-        """
+        """Start a detonation wave. Work on neighbors comes from product pressure
+        (chemical energy → P dV), not a prescribed flyer velocity."""
         body = self.bodies[body_idx]
         mat = MATERIALS[body.material]
-        pos = body.pos.astype(np.float64)
-        centroid = pos.mean(axis=0)
-
-        # Layer normal = thinnest principal axis of the slab, so the plates are
-        # thrown along the cassette normal whatever angle the user set.
-        _, eigvecs = np.linalg.eigh(np.cov((pos - centroid).T))
-        normal = eigvecs[:, 0]
-        normal = normal / max(np.linalg.norm(normal), 1e-12)
-
-        charge_mass = max(float(np.sum(body.mass)), 1e-12)
+        rho = float(mat['density'])
+        d_cj = float(mat.get('detonation_velocity', 7920.0))
+        gamma = float(mat.get('product_gamma', 3.0))
         gurney_v = float(mat.get('gurney_velocity', 2700.0))
-
-        # Bodies touching the charge are the flyer plates. The penetrator is excluded:
-        # it is disrupted by being hit by the plates and products, not thrown by them.
-        exp_tree = cKDTree(body.pos)
-        coupling = self.collision_dist * 1.5
-        plates, side_mass = {}, {1.0: 0.0, -1.0: 0.0}
-        for bj, other in enumerate(self.bodies):
-            if bj == body_idx or other.pos is None or other.body_type == 'penetrator':
-                continue
-            d, _ = exp_tree.query(other.pos, distance_upper_bound=coupling)
-            if not np.any(np.isfinite(d)):
-                continue
-            side = 1.0 if np.dot(other.pos.mean(axis=0) - centroid, normal) >= 0 else -1.0
-            free = other.mass if other.static is None else other.mass[~other.static]
-            plates[bj] = {'side': side}
-            side_mass[side] += float(np.sum(free))
-
-        def plate_velocity(m):
-            # A plate can never outrun the Gurney velocity, which the formula would
-            # otherwise predict for M/C < 1/3 (an effectively open face).
-            return min(gurney_v, gurney_v / np.sqrt(2.0 * m / charge_mass + 1.0 / 3.0))
-
+        spacing = float(getattr(body, 'particle_spacing', self.collision_dist))
         body.burnt = np.zeros(body.n_particles, dtype=bool)
+        body.blast_energy = np.zeros(body.n_particles, dtype=np.float64)
+        body._mass_backup = body.mass.copy()
         self.detonations.append({
             'body': body,
             'body_idx': body_idx,
             'origin': np.asarray(origin, dtype=np.float64),
-            'centroid': centroid,
-            'normal': normal,
-            'half_thickness': max(float(np.max(np.abs((pos - centroid) @ normal))), 1e-6),
             'radius': 0.0,
-            'd_vel': float(mat.get('detonation_velocity', 7900.0)),
-            'v_plus': plate_velocity(side_mass[1.0]),
-            'v_minus': plate_velocity(side_mass[-1.0]),
-            'plates': plates,
-            'pushed': {bj: np.zeros(self.bodies[bj].n_particles, dtype=bool)
-                       for bj in plates},
+            'd_vel': d_cj,
+            # Chapman–Jouguet pressure from the product EOS: P = ρ D² / (γ+1)
+            'p_cj': rho * d_cj ** 2 / (gamma + 1.0),
+            'gamma': gamma,
+            'r0': spacing,
+            'area': spacing ** 2,
+            'e_per_mass': 0.5 * gurney_v ** 2,
             'static_backup': None if body.static is None else body.static.copy(),
         })
 
+    def _pack_particles(self):
+        pos, vel, mass, owners, local_i, locked = [], [], [], [], [], []
+        for bi, b in enumerate(self.bodies):
+            if b.pos is None:
+                continue
+            n = b.n_particles
+            pos.append(b.pos.astype(np.float64))
+            vel.append(b.vel.astype(np.float64))
+            mass.append(b.mass.astype(np.float64))
+            owners.append(np.full(n, bi, dtype=np.int32))
+            local_i.append(np.arange(n, dtype=np.int32))
+            lock = np.zeros(n, dtype=bool)
+            if b.static is not None:
+                lock |= b.static
+            locked.append(lock)
+        if not pos:
+            return None, None, None, None, None, None
+        return (np.vstack(pos), np.vstack(vel), np.concatenate(mass),
+                np.concatenate(owners), np.concatenate(local_i), np.concatenate(locked))
+
+    def _unpack_velocities(self, world_vel):
+        offset = 0
+        for b in self.bodies:
+            if b.pos is None:
+                continue
+            n = b.n_particles
+            b.vel = world_vel[offset:offset + n].astype(np.float32)
+            offset += n
+
     def _apply_detonations(self, dt):
-        """Sweep the detonation front outward, gassing the charge and throwing the plates."""
+        """Detonation front + PdV work from the products.
+
+        Newly burnt particles receive their chemical energy (½ m √(2E)²).
+        Every substep, remaining energy is spent as pressure on whatever is
+        actually nearby: P = P_CJ (r0/r)^γ, F = P A, a = F/m. No flyer list,
+        no prescribed plate speed."""
         for det in self.detonations:
             body = det['body']
             burnt = getattr(body, 'burnt', None)
             if body.pos is None or burnt is None or len(burnt) != body.n_particles:
                 continue
+            if getattr(body, 'blast_energy', None) is None or len(body.blast_energy) != body.n_particles:
+                body.blast_energy = np.zeros(body.n_particles, dtype=np.float64)
 
             det['radius'] += det['d_vel'] * dt
-            radius = det['radius']
-            origin, normal = det['origin'], det['normal']
-
-            reached = np.linalg.norm(body.pos - origin, axis=1) <= radius
-            newly = reached & ~burnt
+            newly = (np.linalg.norm(body.pos - det['origin'], axis=1) <= det['radius']) & ~burnt
             if np.any(newly):
                 burnt |= newly
-                # Detonation products carry no tensile strength.
+                orig_m = body._mass_backup[newly].astype(np.float64)
+                body.blast_energy[newly] = orig_m * det['e_per_mass']
                 if body.springs is not None and len(body.springs) > 0:
                     keep = ~(burnt[body.springs[:, 0]] | burnt[body.springs[:, 1]])
                     body.springs = body.springs[keep]
@@ -148,30 +152,78 @@ class PhysicsEngine:
                     body.spring_stiff = body.spring_stiff[keep]
                 if body.static is not None:
                     body.static[newly] = False
-                # Gurney's linear gas profile: products are at rest on the stagnation
-                # plane at mid-thickness and match the plate speed at each face, so the
-                # middle of the charge lingers in the penetrator's path.
-                proj = (body.pos[newly] - det['centroid']) @ normal
-                sgn = np.where(proj >= 0, 1.0, -1.0)
-                frac = np.clip(np.abs(proj) / det['half_thickness'], 0.0, 1.0)
-                v_mag = np.where(sgn > 0, det['v_plus'], det['v_minus']) * frac
-                body.vel[newly] = ((sgn * v_mag)[:, np.newaxis] * normal).astype(np.float32)
+                if body.active is not None:
+                    body.active[newly] = True
 
-            for bj, info in det['plates'].items():
-                other = self.bodies[bj]
-                pushed = det['pushed'][bj]
-                if other.pos is None or len(pushed) != other.n_particles:
+            hot = burnt & (body.blast_energy > 0.0)
+            if not np.any(hot):
+                continue
+
+            world_pos, world_vel, world_mass, owners, local_i, locked = self._pack_particles()
+            if world_pos is None:
+                continue
+
+            r0 = det['r0']
+            gamma = det['gamma']
+            p_cj = det['p_cj']
+            area = det['area']
+            # Range where P has fallen to ~1% of P_CJ for this EOS — not a flyer radius.
+            r_max = r0 * (100.0 ** (1.0 / max(gamma, 1.0)))
+
+            src_idx = np.where(hot)[0]
+            src_pos = body.pos[src_idx].astype(np.float64)
+            src_e = body.blast_energy[src_idx]
+            tree = cKDTree(world_pos)
+            hits = tree.query_ball_point(src_pos, r_max)
+            exp_bi = det['body_idx']
+            world_of = np.where(owners == exp_bi)[0]
+            local_of = local_i[world_of]
+            local_to_world = np.empty(body.n_particles, dtype=np.int32)
+            local_to_world[local_of] = world_of
+
+            for k, nbrs in enumerate(hits):
+                if src_e[k] <= 0.0 or not nbrs:
                     continue
-                newp = (np.linalg.norm(other.pos - origin, axis=1) <= radius) & ~pushed
-                if other.static is not None:
-                    newp &= ~other.static
-                if not np.any(newp):
+                nbrs = np.asarray(nbrs, dtype=np.int32)
+                delta = world_pos[nbrs] - src_pos[k]
+                dist = np.linalg.norm(delta, axis=1)
+                live = (dist > 1e-6) & ~locked[nbrs]
+                same_src = (owners[nbrs] == exp_bi) & (local_i[nbrs] == src_idx[k])
+                live &= ~same_src
+                same_body = owners[nbrs] == exp_bi
+                if np.any(same_body):
+                    live[same_body] &= burnt[local_i[nbrs[same_body]]]
+                if not np.any(live):
                     continue
-                pushed |= newp
-                v = det['v_plus'] if info['side'] > 0 else det['v_minus']
-                other.vel[newp] += (info['side'] * v * normal).astype(np.float32)
-                if other.active is not None:
-                    other.active[newp] = True
+                nbrs, delta, dist = nbrs[live], delta[live], dist[live]
+                nrm = delta / dist[:, np.newaxis]
+                P = p_cj * (r0 / np.maximum(dist, r0)) ** gamma
+                F = P * area
+                m_j = np.maximum(world_mass[nbrs], 1e-12)
+                m_i = max(float(world_mass[local_to_world[src_idx[k]]]), 1e-12)
+                rel = world_vel[nbrs] - world_vel[local_to_world[src_idx[k]]]
+                v_out = np.einsum('ij,ij->i', rel, nrm)
+                work = np.maximum(F * v_out, 0.0) * dt
+                work_sum = float(np.sum(work))
+                if work_sum <= 1e-18:
+                    p_imp = F * dt
+                    m_red = 1.0 / (1.0 / m_i + 1.0 / m_j)
+                    work_sum = float(np.sum(0.5 * p_imp ** 2 / np.maximum(m_red, 1e-12)))
+                if work_sum > src_e[k] and work_sum > 1e-18:
+                    F = F * (src_e[k] / work_sum)
+                    work_sum = src_e[k]
+                dv = (F * dt / m_j)[:, np.newaxis] * nrm
+                world_vel[nbrs] += dv
+                world_vel[local_to_world[src_idx[k]]] -= (dv * m_j[:, np.newaxis]).sum(axis=0) / m_i
+                src_e[k] = max(src_e[k] - work_sum, 0.0)
+                for bi in np.unique(owners[nbrs]):
+                    other = self.bodies[int(bi)]
+                    if other.active is not None:
+                        sel = nbrs[owners[nbrs] == bi]
+                        other.active[local_i[sel]] = True
+
+            body.blast_energy[src_idx] = src_e
+            self._unpack_velocities(world_vel)
 
     def _propagate_active(self, body):
         if body.springs is None or len(body.springs) == 0:

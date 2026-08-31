@@ -279,19 +279,20 @@ MATERIALS = {
         'color': np.array([0.92, 0.93, 0.95])
     },
     'era_filler': {
-        'name': 'ERA Filler (PBX)',
+        'name': 'ERA Filler (Comp B)',
         'role': 'armor',
-        'density': 1830,           # PBX 9501 (94.9% HMX / Estane-BDNPA-F binder): 1.83 g/cm³ (LANL)
-        'strength': 59e6,          # dynamic peak compressive flow stress 59 MPa; 12 MPa quasi-static (OSTI 783223)
-        'youngs_modulus': 1.1e9,   # 0.97-1.15 GPa at 10⁻³ s⁻¹, room temperature
-        'restitution': 0.035,      # viscoelastic putty — absorbs rather than rebounds
-        'hardness': 1.0,           # waxy pressed HMX/binder; softer than any metal or polymer laminate here
-        'poisson_ratio': 0.48,     # near-incompressible: K = 11.4 GPa with E = 1.1 GPa (LANL viscoelastic model)
+        'density': 1720,           # Composition B (60/40 RDX/TNT), the usual ERA fill (Wikipedia Gurney table)
+        'strength': 59e6,          # dynamic peak compressive flow stress ~60 MPa (cast Comp B / PBX class)
+        'youngs_modulus': 1.1e9,
+        'restitution': 0.035,
+        'hardness': 1.0,
+        'poisson_ratio': 0.48,
         'friction_coeff': 0.40,
-        'explosive': True,         # detonates when shocked; drives the Gurney flyer-plate mechanic
-        'detonation_velocity': 8810,   # PBX 9501 thermodynamic D_CJ = 8.81 km/s (Prop.Expl.Pyro. 2023)
-        'gurney_velocity': 2900,       # √(2E) ≈ 2.9 km/s from W-76 cylinder tests (OSTI 639796)
-        'initiation_velocity': 400,    # impact this fast drives ~2-3 GPa into the charge, above the PBX 9501 Pop-plot threshold
+        'explosive': True,
+        'detonation_velocity': 7920,   # Comp B D_CJ = 7.92 km/s
+        'gurney_velocity': 2700,       # √(2E) = 2.70 km/s; chemical energy per mass is E = √(2E)² / 2
+        'product_gamma': 3.0,          # polytropic γ of Comp B detonation products
+        'initiation_velocity': 400,    # shock initiation; ~2-3 GPa into the charge
         'breaking_strain': 0.007,  # tensile response far weaker than compressive; tears below 1% strain
         'yield_strain': 0.005,     # crushes plastically well before failure in compression
         'compression_limit': 0.30,

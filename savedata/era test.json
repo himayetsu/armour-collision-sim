@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "bodies": [
+    {
+      "type": "penetrator",
+      "name": "Penetrator.001",
+      "material": "steel_core",
+      "particle_size": 0.004,
+      "length": 0.11,
+      "diameter": 0.03,
+      "initial_velocity": 910.0,
+      "center": [
+        -0.05911969393491745,
+        -1.671699063898746e-11,
+        -4.700267170565186e-24
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.001",
+      "material": "era_filler",
+      "particle_size": 0.005,
+      "width": 0.15,
+      "height": 0.15,
+      "thickness": 0.02,
+      "angle": 10,
+      "anchored": true,
+      "center": [
+        0.09333682805299759,
+        0.0020001332741230726,
+        -6.328177551040426e-05
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.002",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.25,
+      "height": 0.25,
+      "thickness": 0.05,
+      "angle": 10,
+      "anchored": true,
+      "center": [
+        0.15725189447402954,
+        0.001999953994527459,
+        -0.0005244343774393201
+      ]
+    },
+    {
+      "type": "armor",
+      "name": "Armor.003",
+      "material": "steel",
+      "particle_size": 0.005,
+      "width": 0.25,
+      "height": 0.25,
+      "thickness": 0.02,
+      "angle": 10,
+      "anchored": false,
+      "center": [
+        0.056278735399246216,
+        0.002000120934098959,
+        -6.328486051643267e-05
+      ]
+    }
+  ]
+}
