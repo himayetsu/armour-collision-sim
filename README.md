@@ -6,6 +6,15 @@
 
 **Windows exe:** `build_release.bat` (needs Python 3.11+). Output is `dist\ArmorSim.exe`. Upload that file to a GitHub Release.
 
+**Geometry:** Dimensions are entered in millimeters and stored in meters. Cylinder
+rings reach the requested radius, including diameters smaller than the lattice
+spacing. Plate lattices span their exact width, height, and thickness; spacing
+controls sampling resolution. Dimensions refer to particle-center bounds, while
+the visible dots are fixed-size screen markers. Changes to the sampling also
+change particle counts and connections, so simulation results can change.
+
+**Geometry regression checks:** `python -m unittest discover -s tests -v`
+
 ---
 
 ## Technologies
@@ -83,21 +92,25 @@ Particles within `spacing × 1.8` are connected. Penetrator uses all pairs withi
 
 ## Materials
 
-Per-material constants (from real-world data where noted):
+`materials.py` contains nominal bulk properties and legacy solver settings.
+The [material-property audit](docs/material_properties.md) records the sources,
+units, grade/condition limitations, and values still requiring verification.
 
 | Property | Role |
 |----------|------|
-| **density** | Mass = density × spacing³ |
-| **youngs_modulus** | Spring stiffness **k** |
-| **strength** | Overlap split (ratio), restitution loss (s_ratio), contact stiffness factor |
-| **restitution** | Impact bounce (combined √(e₁e₂)) |
-| **hardness** | Stored for possible future use |
-| **poisson_ratio** | Stored for possible future use |
-| **friction_coeff** | Used in restitution loss at high speed |
-| **breaking_strain** | |ε| > this → spring removed |
-| **compression_limit** | L/L₀ below this → extra repulsion |
+| **density** | Nominal kg/m³; node mass = density × spacing³ |
+| **youngs_modulus** | Nominal Pa; used with numerical spring/contact scaling |
+| **strength** | Legacy contact coefficient in Pa; definitions differ between entries |
+| **restitution**, **friction_coeff** | Legacy contact settings; actual values depend on the contacting pair and conditions |
+| **hardness** | Unused legacy ranking; no consistent hardness scale |
+| **poisson_ratio** | Dimensionless metadata; currently unused by the solver |
+| **breaking_strain**, **yield_strain**, **compression_breaking_strain** | Legacy spring deformation/failure thresholds |
+| **compression_limit**, **spring_min_ratio**, **stiffness_scale**, **shear_boost** | Numerical-model settings, not measured bulk constants |
 
-Representative values: **Tungsten** (penetrator) – ρ≈19.3e3 kg/m³, E≈411 GPa, breaking_strain 0.05; **RHA Steel** – ρ≈7850, E≈210 GPa, strength≈1 GPa, breaking_strain 0.15; **Ceramic** – ρ≈3950, E≈370 GPa, breaking_strain 0.008. References: AZoM, material-properties.org, MIL-DTL-12560K, ceramic armor literature.
+Representative stored bulk values: **Tungsten** – ρ=19,300 kg/m³, E=411 GPa;
+**Steel** – ρ=7,850 kg/m³, E=207 GPa; **Alumina** – ρ=3,960 kg/m³, E=370 GPa.
+Agreement with a bulk-property reference does not validate the simulation's
+contact or fracture response. Runtime values were preserved during this audit.
 
 ---
 

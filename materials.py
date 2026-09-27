@@ -1,5 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Material properties: density, strength, Young's modulus, breaking_strain, compression_limit, etc."""
+"""Nominal bulk properties and legacy numerical-model settings.
+
+Bulk units: density is kg/m^3, youngs_modulus is Pa, and poisson_ratio is
+dimensionless. These are representative values, not a matched set of measured
+properties for a specified grade, temperature, direction, and processing history.
+See docs/material_properties.md for the source audit and unresolved values.
+
+The strength field mixes strength definitions between entries. Strain thresholds,
+compression limits, spring_min_ratio, stiffness_scale, and shear_boost are legacy
+solver settings; shear_boost is a dimensionless multiplier, not G/E. Their inline
+comments describe historical tuning rationale, not independently verified data.
+Restitution and friction depend on the contacting pair and test conditions.
+The unused hardness field is a legacy ranking without a consistent hardness
+scale. Poisson's ratio is also currently metadata, not an input to the solver.
+"""
 
 import numpy as np
 
@@ -25,9 +39,9 @@ MATERIALS = {
     'tungsten_carbide': {
         'name': 'Tungsten Carbide',
         'role': 'penetrator',
-        'density': 15000,          # WC-6Co: 15.0-15.1 g/cm³ (General Carbide, AZoM)
+        'density': 15000,          # nominal cemented WC; exact binder/grade not verified
         'strength': 2700e6,        # WC-Co compressive strength ~2.7 GPa; TRS ~2.0-2.5 GPa
-        'youngs_modulus': 630e9,   # WC-6Co: 614-648 GPa range (Goodfellow, AZoM)
+        'youngs_modulus': 630e9,   # nominal value; a matched WC-Co datasheet is still needed
         'restitution': 0.012,
         'hardness': 9.5,
         'poisson_ratio': 0.22,
@@ -117,7 +131,7 @@ MATERIALS = {
         'role': 'armor',
         'density': 7850,
         'strength': 1850e6,        # dynamic UTS ~1850 MPa (Armox 500T min 1700; Cai et al. 2010 ballistic tests)
-        'youngs_modulus': 210e9,   # all steels: ~207-211 GPa regardless of hardness treatment
+        'youngs_modulus': 210e9,   # nominal low-alloy-steel value; not universal to all steels
         'restitution': 0.024,      # harder than RHA → less elastic rebound
         'hardness': 6.3,           # BHN ~500 (HRC ~51); between RHA 5.5 and steel_core 7.0
         'poisson_ratio': 0.29,
@@ -151,9 +165,9 @@ MATERIALS = {
     'ceramic': {
         'name': 'Alumina (Al2O3)',
         'role': 'armor',
-        'density': 3960,           # 99% purity: 3.96 g/cm³ (AZoM 99.5%)
+        'density': 3960,           # nominal high-purity alumina; supplier grade is unspecified
         'strength': 2500e6,        # contact/compressive strength ~2.5 GPa (MOR 380 MPa was flexural only)
-        'youngs_modulus': 370e9,   # 99.5% Al2O3: MatWeb, AZoM confirm ~370 GPa
+        'youngs_modulus': 370e9,   # supported for some high-purity grades; see source audit
         'restitution': 0.013,
         'hardness': 9.0,           # HV 1400-1600; anchor for ceramics
         'poisson_ratio': 0.22,
@@ -175,7 +189,7 @@ MATERIALS = {
         'youngs_modulus': 460e9,   # RUS measurement 458.7 GPa; AZoM/MakeItFrom confirm ~460 GPa
         'restitution': 0.010,
         'hardness': 9.8,           # HV ~38 GPa; 3rd hardest material (after diamond, cBN)
-        'poisson_ratio': 0.17,     # 0.172 (AZoM, B4C Kessler study)
+        'poisson_ratio': 0.17,     # retained; exact value not verified by the selected reference
         'friction_coeff': 0.45,
         'breaking_strain': 0.0012, # dynamic: ~0.001-0.005; stress-induced amorphization possible at extreme rates
         'yield_strain': 0.00127,   # no plastic zone; fracture = yield
@@ -229,7 +243,7 @@ MATERIALS = {
         'role': 'armor',
         'density': 4430,
         'strength': 1450e6,        # dynamic YS at high strain rates ~1200-1500 MPa (Johnson-Cook Ti-6Al-4V)
-        'youngs_modulus': 114e9,   # 113-116 GPa across all sources
+        'youngs_modulus': 114e9,   # nominal Ti-6Al-4V value; sources vary with condition
         'restitution': 0.028,
         'hardness': 4.8,           # HB 334-379; clearly below RHA (5.5) — fixes titanium < RHA
         'poisson_ratio': 0.34,
@@ -263,12 +277,12 @@ MATERIALS = {
     'uhmwpe': {
         'name': 'UHMWPE (Dyneema)',
         'role': 'armor',
-        'density': 970,            # UHMWPE fiber: 0.97 g/cm³; panel ~970-980 kg/m³
-        'strength': 3.4e9,         # Dyneema SK76 fiber ≥3.0-3.4 GPa; composite ~3.4 GPa longitudinal
-        'youngs_modulus': 100e9,   # fiber modulus 90-120 GPa; composite in-plane ~100 GPa
+        'density': 970,            # nominal fibre value; no matched composite grade verified
+        'strength': 3.4e9,         # legacy coefficient, not a verified bulk-composite property
+        'youngs_modulus': 100e9,   # longitudinal fibre-scale estimate, not isotropic plate modulus
         'restitution': 0.020,
         'hardness': 1.8,           # Shore D ~60-65; very soft vs metals
-        'poisson_ratio': 0.42,
+        'poisson_ratio': 0.42,     # legacy scalar; no matched fibre/composite value verified
         'friction_coeff': 0.25,    # UHMWPE: one of the lowest dry friction coefficients of any solid
         'breaking_strain': 0.025,  # dynamic: ductile-to-brittle transition above ~100 s⁻¹; yarns fail at ~2-3% at ballistic rates
         'yield_strain': 0.015,     # ~1.5% onset of fibre/matrix damage

@@ -2,6 +2,7 @@
 """Soft body types and geometry: SoftBody, penetrator/plate creation, Penetrator, ArmorPlate."""
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 from materials import MATERIALS
 
@@ -51,24 +52,23 @@ def create_cylinder_body(length, diameter, material, spacing=None):
     nose_fraction = float(np.clip(0.20 + (diameter - 0.020) * 2.941, 0.15, 0.55))
     body_fraction = 1.0 - nose_fraction
 
-    # Only add nose rings if the body itself has rings (avoids unsupported ring particles
-    # on thin rods where radius < spacing, which causes explosion on small calibres)
-    body_has_rings = (spacing <= radius)
-
     n_axial = int(length * body_fraction / spacing) + 1
-    n_radial = max(1, int(radius / spacing))
+    # Fit the nearest number of intervals to the radius. Always rounding up
+    # inserted a tightly packed inner ring as soon as a radius exceeded spacing.
+    n_radial = max(1, int(round(radius / spacing)))
+
+    def add_ring(x, r):
+        # Include the cardinal directions so both transverse extents match the
+        # diameter. Spacing controls resolution, never the outer surface.
+        n_circ = max(4, 4 * int(round(2 * np.pi * r / (4 * spacing))))
+        angles = np.arange(n_circ) * (2 * np.pi / n_circ)
+        particles.extend([x, r * np.cos(a), r * np.sin(a)] for a in angles)
 
     for i in range(n_axial):
         x = i * spacing
         particles.append([x, 0, 0])
         for r_idx in range(1, n_radial + 1):
-            r = r_idx * spacing
-            if r > radius:
-                break
-            n_circ = max(6, int(2 * np.pi * r / spacing))
-            for j in range(n_circ):
-                angle = 2 * np.pi * j / n_circ
-                particles.append([x, r * np.cos(angle), r * np.sin(angle)])
+            add_ring(x, radius * r_idx / n_radial)
 
     body_end_x = (n_axial - 1) * spacing
     # Nose starts exactly where body ends — no gap, guaranteed spring connectivity
@@ -80,20 +80,12 @@ def create_cylinder_body(length, diameter, material, spacing=None):
         x = body_end_x + t * nose_length
         current_r = radius * (1 - t ** 1.3)
         particles.append([x, 0, 0])
-        if body_has_rings and current_r >= spacing * 0.4:
-            # Inner rings at spacing multiples, outermost ring at actual taper radius
-            # so the outer surface shrinks smoothly (shorter rest lengths = weaker springs naturally)
-            n_inner = max(0, int(current_r / spacing) - 1)
-            for r_idx in range(1, n_inner + 1):
-                r = r_idx * spacing
-                n_circ = max(4, int(2 * np.pi * r / spacing))
-                for j in range(n_circ):
-                    angle = 2 * np.pi * j / n_circ
-                    particles.append([x, r * np.cos(angle), r * np.sin(angle)])
-            n_circ = max(4, int(2 * np.pi * current_r / spacing))
-            for j in range(n_circ):
-                angle = 2 * np.pi * j / n_circ
-                particles.append([x, current_r * np.cos(angle), current_r * np.sin(angle)])
+        if i < n_nose and current_r >= spacing * 0.4:
+            # Use the shaft's sampling density through the taper, returning to
+            # centerline samples when a ring would crowd the axis near the tip.
+            n_rings = max(1, int(round(current_r / spacing)))
+            for r_idx in range(1, n_rings + 1):
+                add_ring(x, current_r * r_idx / n_rings)
 
     pos = np.array(particles, dtype=np.float32)
     pos[:, 0] -= 0.1
@@ -101,17 +93,17 @@ def create_cylinder_body(length, diameter, material, spacing=None):
     vel = np.zeros((n, 3), dtype=np.float32)
     mass = np.full(n, mat['density'] * spacing**3, dtype=np.float32)
 
-    springs = []
     spring_dist = spacing * 1.8
-    for i in range(n):
-        for j in range(i + 1, n):
-            dist = np.linalg.norm(pos[j] - pos[i])
-            if dist < spring_dist:
-                springs.append([i, j, dist])
-
-    springs = np.array(springs, dtype=np.float32)
-    spring_indices = springs[:, :2].astype(np.int32)
-    spring_rest = springs[:, 2]
+    # Thin shapes now have full rings, so avoid a quadratic all-pairs scan.
+    # Widen the tree query by one float32 ULP, then retain the original strict
+    # float32 distance check and pair ordering used by the lattice builder.
+    query_dist = np.nextafter(np.float32(spring_dist), np.float32(np.inf))
+    spring_indices = cKDTree(pos).query_pairs(query_dist, output_type='ndarray').astype(np.int32)
+    spring_rest = np.linalg.norm(pos[spring_indices[:, 1]] - pos[spring_indices[:, 0]], axis=1)
+    keep = spring_rest < spring_dist
+    spring_indices, spring_rest = spring_indices[keep], spring_rest[keep]
+    order = np.lexsort((spring_indices[:, 1], spring_indices[:, 0]))
+    spring_indices, spring_rest = spring_indices[order], spring_rest[order]
     k_per_unit = mat['youngs_modulus'] * mat.get('stiffness_scale', 6e-4)
     # spring_stiff = k * rest_length: shorter nose springs are naturally weaker, no extra scaling needed
     spring_stiff = (k_per_unit * spring_rest).astype(np.float32)
@@ -130,16 +122,21 @@ def create_plate_body(width, height, thickness, angle_deg, material, spacing=Non
 
     particles = []
     static_particles = []
-    nx = max(1, int(round(width / spacing)) + 1)
-    ny = max(1, int(round(height / spacing)) + 1)
-    nz = max(1, int(round(thickness / spacing)) + 1)
+    nx = max(2, int(round(width / spacing)) + 1)
+    ny = max(2, int(round(height / spacing)) + 1)
+    nz = max(2, int(round(thickness / spacing)) + 1)
+    # Fit each axis to its requested endpoints. Multiplying lattice indices by
+    # a shared spacing made dimensions depend on rounding along the other axes.
+    xs = np.linspace(-width / 2, width / 2, nx)
+    ys = np.linspace(-height / 2, height / 2, ny)
+    zs = np.linspace(0, thickness, nz)
 
     for iz in range(nz):
         for iy in range(ny):
             for ix in range(nx):
-                x = -width / 2 + ix * spacing
-                y = -height / 2 + iy * spacing
-                z = iz * spacing
+                x = xs[ix]
+                y = ys[iy]
+                z = zs[iz]
                 rx = z * cos_a + x * sin_a
                 rz = -z * sin_a + x * cos_a
                 particles.append([rx + 0.22, y, rz])
