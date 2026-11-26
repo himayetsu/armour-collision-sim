@@ -3,7 +3,7 @@
 
 import numpy as np
 from PyQt5.QtWidgets import QWidget, QLabel
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QVariantAnimation
 from PyQt5.QtGui import QColor, QMatrix4x4, QVector3D, QPainter, QPainterPath, QPen, QBrush
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
@@ -77,6 +77,21 @@ class SimViewWidget(gl.GLViewWidget):
         self._drag_pos0 = None
         self._drag_rest0 = None
 
+        rng = np.random.default_rng(0)
+        offsets = rng.normal(size=(64, 3))
+        self._burst_offsets = offsets / np.linalg.norm(offsets, axis=1, keepdims=True)
+        self._burst_offsets *= rng.uniform(0.45, 1.0, size=(len(offsets), 1))
+        self._burst = gl.GLScatterPlotItem(pxMode=True, glOptions='translucent')
+        self._burst.setDepthValue(1)
+        self._burst.hide()
+        self.addItem(self._burst)
+        self._burst_animation = QVariantAnimation(self)
+        self._burst_animation.setDuration(650)
+        self._burst_animation.setStartValue(0.0)
+        self._burst_animation.setEndValue(1.0)
+        self._burst_animation.valueChanged.connect(self._draw_burst)
+        self._burst_animation.finished.connect(self._burst.hide)
+
         self._view_label = QLabel(VIEW_LABELS.get(mode, mode.capitalize()), self)
         self._view_label.setStyleSheet(
             "color: #6af; background: rgba(0,0,0,120); font-size: 11px; padding: 3px 6px;")
@@ -90,6 +105,23 @@ class SimViewWidget(gl.GLViewWidget):
             self.setCameraPosition(distance=0.5, elevation=90, azimuth=90)
         else:
             self.setCameraPosition(distance=0.5, elevation=15, azimuth=90)
+
+    def preview_burst(self, center=None):
+        self._burst_animation.stop()
+        if center is None:
+            target = self.opts['center']
+            center = (target.x(), target.y(), target.z())
+        self._burst_center = np.asarray(center, dtype=np.float32)
+        self._burst_extent = self.opts['distance'] * 0.16
+        self._draw_burst(0.0)
+        self._burst.show()
+        self._burst_animation.start()
+
+    def _draw_burst(self, progress):
+        spread = progress * (2 - progress) * self._burst_extent
+        opacity = (1 - progress) ** 1.5
+        self._burst.setData(pos=self._burst_center + self._burst_offsets * spread,
+                            size=6 - 3 * progress, color=(1.0, 0.58, 0.25, opacity))
 
     def _default_viewport(self):
         dpr = self.devicePixelRatio()

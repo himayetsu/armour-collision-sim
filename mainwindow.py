@@ -313,6 +313,11 @@ class MainWindow(QMainWindow):
         self.armor_vis_cb.toggled.connect(self.toggle_armor_vis)
         row2.addWidget(self.armor_vis_cb)
 
+        burst_btn = QPushButton("Preview Burst")
+        burst_btn.setToolTip("Show a visual particle burst at the selected body or camera target.")
+        burst_btn.clicked.connect(self.preview_burst)
+        row2.addWidget(burst_btn)
+
         row2.addStretch()
 
         tl_l.addLayout(row1)
@@ -453,6 +458,10 @@ class MainWindow(QMainWindow):
         self.solid_view = style == "Solid"
         for body in self.physics.bodies:
             self.update_visuals(body)
+
+    def preview_burst(self):
+        center = self.selected.pos.mean(axis=0) if self.selected is not None else None
+        self.view.preview_burst(center)
 
     def toggle_penetrator_vis(self, show):
         self.show_penetrator = show

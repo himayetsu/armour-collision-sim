@@ -16,6 +16,7 @@ middle of the plate. Use a bend angle of zero for a flat plate.
 
 Use **3D Style** to switch between Solid exterior faces and Wireframe particles
 and bonds. The three 2D panels in Quad View display particles for editing.
+**Preview Burst** plays a visual effect at the selected body or camera target.
 Dimensions are measured at particle centers. Spacing controls sampling
 resolution and can affect simulation results by changing particle counts and
 connections.
