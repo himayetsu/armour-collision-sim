@@ -12,7 +12,7 @@ from OpenGL import GL
 from gizmo import TransformGizmo
 from materials import MATERIALS
 from surface_display import SurfacePatchMesh
-from surface_mesh import BodySurfaceTopology, SurfacePointSampler
+from surface_mesh import BodySurfaceTopology
 
 
 # Velocity → colour ramp (same stops as the 3D scatter in mainwindow.py).
@@ -63,25 +63,20 @@ def _surface_lighting_shader():
 
 
 _SURFACE_SHADER = _surface_lighting_shader()
-_SURFACE_POINT_SPACING = {'Low': 0.016, 'Medium': 0.008, 'High': 0.004, 'Ultra': 0.002}
-_SURFACE_POINT_SIZE = {'Low': 5, 'Medium': 4, 'High': 3, 'Ultra': 2}
-_SURFACE_SUBDIVISIONS = {'High': 4, 'Ultra': 6}
+_SURFACE_SUBDIVISIONS = 4
 _MAX_REFINED_TRIANGLES = 100_000
 
 
 class BodySurface(gl.GLMeshItem):
     def __init__(self, body):
         topology = BodySurfaceTopology(body)
-        subdivisions = _SURFACE_SUBDIVISIONS.get(body.detail, 1)
+        subdivisions = _SURFACE_SUBDIVISIONS
         if len(topology.quads):
             triangle_budget = max(0, _MAX_REFINED_TRIANGLES - len(topology.triangles))
             subdivisions = min(subdivisions, int(np.sqrt(triangle_budget / (2 * len(topology.quads)))))
-        super().__init__(smooth=False, shader=_SURFACE_SHADER.name, glOptions='opaque',
-                         drawEdges=body.detail == 'Low', edgeColor=(0.16, 0.20, 0.25, 1.0))
+        super().__init__(smooth=False, shader=_SURFACE_SHADER.name, glOptions='opaque')
         self.updateGLOptions({GL.GL_CULL_FACE: False})
         self.topology = topology
-        self.point_size = _SURFACE_POINT_SIZE[body.detail]
-        self._point_spacing = _SURFACE_POINT_SPACING[body.detail]
         self._subdivisions = subdivisions
         self._refined = None
         self._refined_quads = None
@@ -89,22 +84,6 @@ class BodySurface(gl.GLMeshItem):
         self._positions = None
         self._colors = None
         self._faces = None
-        self._sample_faces = None
-        self._sample_input = None
-        self._sample_loose = None
-        self._sample_buffers = None
-
-    def paint(self):
-        if not self.opts['drawEdges']:
-            super().paint()
-            return
-        # Bias the fill away from the outlines so they stay visible at a grazing angle.
-        GL.glEnable(GL.GL_POLYGON_OFFSET_FILL)
-        GL.glPolygonOffset(1.0, 1.0)
-        try:
-            super().paint()
-        finally:
-            GL.glDisable(GL.GL_POLYGON_OFFSET_FILL)
 
     def _refined_mesh(self):
         if self._subdivisions < 2:
@@ -141,34 +120,10 @@ class BodySurface(gl.GLMeshItem):
                 self._faces = faces
         return self.topology.particles
 
-    def surface_points(self, body, colors):
+    def surface_node_indices(self, body):
+        """Return solver indices for exterior nodes and loose particles."""
         self.topology.update(body.springs, body.pos)
-        refined = self._refined_mesh()
-        faces = refined.faces if refined is not None else self.topology.faces
-        loose = self.topology.particles
-        if not len(faces):
-            return body.pos[loose], colors[loose]
-
-        if self._sample_faces is not faces:
-            rest = self.topology.rest_positions
-            if refined is not None:
-                rest = refined.sample(rest)
-            self._point_sampler = SurfacePointSampler(rest, faces, spacing=self._point_spacing)
-            self._sample_faces = faces
-            self._sample_input = None
-
-        values = np.column_stack((body.pos, colors))
-        if (not np.array_equal(self._sample_input, values)
-                or not np.array_equal(self._sample_loose, loose)):
-            source = refined.sample(values) if refined is not None else values
-            samples = self._point_sampler.sample(source)
-            if len(loose):
-                samples = np.concatenate((samples, values[loose]))
-            self._sample_input = values
-            self._sample_loose = loose
-            self._sample_buffers = (np.ascontiguousarray(samples[:, :3], dtype=np.float32),
-                                    np.ascontiguousarray(samples[:, 3:], dtype=np.float32))
-        return self._sample_buffers
+        return np.union1d(self.topology.vertices, self.topology.particles)
 
 
 class SimViewWidget(gl.GLViewWidget):

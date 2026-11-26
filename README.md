@@ -14,25 +14,24 @@ controls. In **Curvature**, choose whether to bend across the width or height
 and set the total bend angle. The selected dimension is the arc length along the
 middle of the plate. Use a bend angle of zero for a flat plate.
 
-Use **3D Style** to switch between Solid exterior faces, Wireframe particles
-and bonds, and Surface Points. The three 2D panels in Quad View display
-particles for editing. The Scene panel's **3D display** column shows the count
-for the active 3D style. Hover over a row to see the simulation node and bond
-counts alongside the display counts.
+Use **3D Style** to switch between Solid exterior faces, Wireframe nodes and
+bonds, and Surface Nodes. Surface Nodes draws the simulation nodes on the
+exterior plus any loose nodes. The three 2D panels in Quad View display nodes
+for editing. The Scene panel's **3D display** column counts the active 3D
+geometry. Hover over a row to see the simulation node and bond counts alongside
+the display counts.
 **Preview Burst** plays a visual effect at the selected body or camera target.
 Dimensions are measured at particle centers.
 
-Use **Detail** in the Simulation panel to change node density for inert bodies.
+Use **Detail** in the Simulation panel to change simulation node density for inert bodies.
 Medium uses the original sampling and Low is coarser. Ultra uses a nominal
 10 mm simulation spacing or Medium's spacing where it is finer. High is halfway
-between the Medium and Ultra simulation spacings. **Surface Points** targets
-16, 8, 4, and 2 mm visual spacing from Low to Ultra. In **Solid**, Low outlines
-its coarse facets, Medium uses the base surface, and High and Ultra interpolate
-increasingly fine patches between deformed nodes. Large surfaces use a drawing
-budget, so the spacing and refinement can vary. Changing detail pauses and
-resets the simulation. Finer simulation meshes can run more slowly and affect
-results by changing particle counts and bonds. Exported layouts store the
-setting, and older layouts open at Medium.
+between the Medium and Ultra simulation spacings. Properties shows the selected
+body's nominal node spacing. Solid uses the same interpolation at each level
+and limits subdivision on large meshes to control rendering cost. Changing
+detail pauses and resets the simulation. Finer simulation
+meshes can run more slowly and affect results by changing node counts and
+bonds. Exported layouts store the setting, and older layouts open at Medium.
 
 **Geometry regression checks:** `python -m unittest discover -s tests -v`
 

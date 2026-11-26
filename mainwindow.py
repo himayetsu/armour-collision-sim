@@ -148,6 +148,7 @@ class MainWindow(QMainWindow):
         self.show_penetrator = True
         self.show_armor = True
         self._scene_items = {}
+        self._simulation_info_labels = None
 
         self.setup_ui()
         self.timer = QTimer()
@@ -274,8 +275,7 @@ class MainWindow(QMainWindow):
         self.detail_combo = QComboBox()
         self.detail_combo.addItems(DETAIL_LEVELS)
         self.detail_combo.setCurrentText(DEFAULT_DETAIL)
-        self.detail_combo.setToolTip("Surface Points uses 16, 8, 4, or 2 mm visual spacing. "
-                                      "High and Ultra refine filled surfaces. "
+        self.detail_combo.setToolTip("Sets the density of simulation nodes. Medium uses the original spacing. "
                                       "Changing detail pauses and resets the simulation.")
         self.detail_combo.currentTextChanged.connect(self.change_detail)
         row1.addWidget(self.detail_combo)
@@ -315,7 +315,7 @@ class MainWindow(QMainWindow):
 
         row2.addWidget(QLabel("3D Style"))
         self.render_style_combo = QComboBox()
-        self.render_style_combo.addItems(["Solid", "Wireframe", "Surface Points"])
+        self.render_style_combo.addItems(["Solid", "Wireframe", "Surface Nodes"])
         self.render_style_combo.currentTextChanged.connect(self.set_render_style)
         row2.addWidget(self.render_style_combo)
 
@@ -424,6 +424,7 @@ class MainWindow(QMainWindow):
             self._save_body_reset_snapshot(body)
         self.rebuild_visuals(body)
         if self.selected is body:
+            self._refresh_simulation_info(body)
             self.gizmo.update_position()
         if self.quad_mode:
             self._sync_ortho_views()
@@ -534,11 +535,11 @@ class MainWindow(QMainWindow):
             body.scatter.setVisible(bool(len(particles)))
             if len(particles):
                 body.scatter.setData(pos=body.pos[particles], color=colors[particles], size=6)
-        elif self.render_style == "Surface Points":
-            points, point_colors = body.surface.surface_points(body, colors)
-            body.scatter.setVisible(bool(len(points)))
-            if points is not body.scatter.pos or point_colors is not body.scatter.color:
-                body.scatter.setData(pos=points, color=point_colors, size=body.surface.point_size)
+        elif self.render_style == "Surface Nodes":
+            nodes = body.surface.surface_node_indices(body)
+            body.scatter.setVisible(bool(len(nodes)))
+            if len(nodes):
+                body.scatter.setData(pos=body.pos[nodes], color=colors[nodes], size=6)
         else:
             body.scatter.show()
             body.scatter.setData(pos=body.pos, color=colors, size=6)
@@ -581,19 +582,20 @@ class MainWindow(QMainWindow):
         if item is None or body.scatter is None:
             return
         faces = body.surface.displayed_triangles
-        points = len(body.scatter.pos) if body.scatter.visible() else 0
+        nodes = len(body.scatter.pos) if body.scatter.visible() else 0
         counts = []
         if faces:
             counts.append(f"{faces:,} {'face' if faces == 1 else 'faces'}")
-        if points:
-            counts.append(f"{points:,} {'point' if points == 1 else 'points'}")
+        if nodes:
+            kind = 'loose ' if self.render_style == 'Solid' else ''
+            counts.append(f"{nodes:,} {kind}{'node' if nodes == 1 else 'nodes'}")
         summary = "\n".join(counts) or "Hidden"
         if item.text(1) != summary:
             item.setText(1, summary)
 
         bonds = len(body.springs) if body.springs is not None else 0
         tooltip = (f"{body.name}\n{body.n_particles:,} simulation nodes\n{bonds:,} simulation bonds\n"
-                   f"{faces:,} display triangles\n{points:,} display points")
+                   f"{faces:,} display triangles\n{nodes:,} display {'node' if nodes == 1 else 'nodes'}")
         if item.toolTip(0) != tooltip:
             item.setToolTip(0, tooltip)
             item.setToolTip(1, tooltip)
@@ -622,9 +624,10 @@ class MainWindow(QMainWindow):
         info = QGroupBox("Info")
         il = QVBoxLayout(info)
         il.addWidget(QLabel(f"Name: {body.name}"))
-        il.addWidget(QLabel(f"{body.n_particles:,} simulation nodes"))
-        bonds = len(body.springs) if body.springs is not None else 0
-        il.addWidget(QLabel(f"{bonds:,} simulation bonds"))
+        self._simulation_info_labels = tuple(QLabel() for _ in range(3))
+        for label in self._simulation_info_labels:
+            il.addWidget(label)
+        self._refresh_simulation_info(body)
         self.props_box.addWidget(info)
 
         mat_grp = QGroupBox("Material")
@@ -662,6 +665,15 @@ class MainWindow(QMainWindow):
         self.props_box.addWidget(dim)
         if body.body_type == 'armor':
             self._show_plate_shape_controls(body, dimensions)
+
+    def _refresh_simulation_info(self, body):
+        if self._simulation_info_labels is None:
+            return
+        nodes, spacing, bonds = self._simulation_info_labels
+        nodes.setText(f"{body.n_particles:,} simulation nodes")
+        spacing.setText(f"{body.particle_spacing * 1000:g} mm nominal node spacing")
+        bond_count = len(body.springs) if body.springs is not None else 0
+        bonds.setText(f"{bond_count:,} simulation bonds")
 
     def _show_plate_shape_controls(self, body, dimensions):
         orientation = QGroupBox("Orientation")
@@ -715,6 +727,7 @@ class MainWindow(QMainWindow):
         return s
 
     def clear_props(self):
+        self._simulation_info_labels = None
         while self.props_box.count():
             w = self.props_box.takeAt(0).widget()
             if w:
