@@ -347,17 +347,15 @@ class PhysicsEngine:
     def _propagate_active(self, body):
         if body.springs is None or len(body.springs) == 0:
             return
+        active = body.active
         i_idx = body.springs[:, 0]
         j_idx = body.springs[:, 1]
         for _ in range(5):
-            new_i = body.active[j_idx] & ~body.active[i_idx]
-            new_j = body.active[i_idx] & ~body.active[j_idx]
-            if not (np.any(new_i) or np.any(new_j)):
+            mixed = active[i_idx] ^ active[j_idx]
+            if not mixed.any():
                 break
-            if np.any(new_i):
-                body.active[i_idx[new_i]] = True
-            if np.any(new_j):
-                body.active[j_idx[new_j]] = True
+            active[i_idx[mixed]] = True
+            active[j_idx[mixed]] = True
 
     def step(self, dt):
         real_dt = dt * self.time_scale
@@ -382,14 +380,21 @@ class PhysicsEngine:
             if self.detonations:
                 self._apply_detonations(sub_dt)
 
+            # Contacts can wake a body during the substep. Only skip spring and
+            # integration work after contact processing has updated activity.
+            active_bodies = []
             for body in self.bodies:
                 if body.active is not None:
-                    self._propagate_active(body)
+                    if not body.active.any():
+                        continue
+                    if not body.active.all():
+                        self._propagate_active(body)
+                active_bodies.append(body)
 
-            for body in self.bodies:
+            for body in active_bodies:
                 self._apply_springs(body, sub_dt)
 
-            for body in self.bodies:
+            for body in active_bodies:
                 mask = body.active if body.active is not None else np.ones(body.n_particles, dtype=bool)
                 if body.static is not None:
                     mask = mask & ~body.static
