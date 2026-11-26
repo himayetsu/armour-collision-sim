@@ -10,14 +10,14 @@ from PyQt5.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QScrollArea, QDockWidget, QCheckBox,
     QGridLayout, QFileDialog, QMessageBox
 )
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QSignalBlocker, QTimer
 from PyQt5.QtGui import QColor, QPainter, QLinearGradient, QFont
 from PyQt5.QtWidgets import QStylePainter, QStyleOptionComboBox, QStyle
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 
 from physics import PhysicsEngine
-from bodies import Penetrator, ArmorPlate
+from bodies import DEFAULT_DETAIL, DETAIL_LEVELS, Penetrator, ArmorPlate
 from views import BodySurface, SimViewWidget, OrthoCanvas, VIEW_LABELS
 from gizmo import TransformGizmo
 from materials import MATERIALS
@@ -263,6 +263,15 @@ class MainWindow(QMainWindow):
         self.speed_lbl.setMinimumWidth(50)
         row1.addWidget(self.speed_lbl)
 
+        row1.addWidget(QLabel("Detail"))
+        self.detail_combo = QComboBox()
+        self.detail_combo.addItems(DETAIL_LEVELS)
+        self.detail_combo.setCurrentText(DEFAULT_DETAIL)
+        self.detail_combo.setToolTip("Particle sampling detail. Ultra targets 10 mm nominal spacing. "
+                                      "Changing detail pauses and resets the simulation.")
+        self.detail_combo.currentTextChanged.connect(self.change_detail)
+        row1.addWidget(self.detail_combo)
+
         row1.addSpacing(10)
         self.spring_cb = QCheckBox("Show Bonds")
         self.spring_cb.setChecked(True)
@@ -420,14 +429,15 @@ class MainWindow(QMainWindow):
 
     def add_penetrator(self):
         n = len([b for b in self.physics.bodies if b.body_type == 'penetrator'])
-        p = Penetrator(f"Penetrator.{n + 1:03d}")
+        p = Penetrator(f"Penetrator.{n + 1:03d}", detail=self.detail_combo.currentText())
         self.physics.bodies.append(p)
         self.create_visuals(p)
         self.update_tree()
         self.select_body(p)
 
     def add_armor(self):
-        a = ArmorPlate(f"Armor.{len([b for b in self.physics.bodies if b.body_type == 'armor']) + 1:03d}")
+        n = len([b for b in self.physics.bodies if b.body_type == 'armor'])
+        a = ArmorPlate(f"Armor.{n + 1:03d}", detail=self.detail_combo.currentText())
         self.physics.bodies.append(a)
         self.create_visuals(a)
         self.update_tree()
@@ -694,7 +704,7 @@ class MainWindow(QMainWindow):
         self._do_armor_rebuild()
         if src.body_type == 'penetrator':
             n = len([b for b in self.physics.bodies if b.body_type == 'penetrator'])
-            dup = Penetrator(f"Penetrator.{n + 1:03d}")
+            dup = Penetrator(f"Penetrator.{n + 1:03d}", detail=src.detail)
             dup.material = src.material
             dup.length = src.length
             dup.diameter = src.diameter
@@ -702,7 +712,7 @@ class MainWindow(QMainWindow):
             dup.particle_size = src.particle_size
         else:
             n = len([b for b in self.physics.bodies if b.body_type == 'armor'])
-            dup = ArmorPlate(f"Armor.{n + 1:03d}")
+            dup = ArmorPlate(f"Armor.{n + 1:03d}", detail=src.detail)
             dup.material = src.material
             dup.width = src.width
             dup.height = src.height
@@ -757,7 +767,8 @@ class MainWindow(QMainWindow):
             entry['center'] = np.mean(body.pos, axis=0).tolist()
             bodies_data.append(entry)
         with open(path, 'w') as f:
-            json.dump({'version': 1, 'bodies': bodies_data}, f, indent=2)
+            json.dump({'version': 1, 'detail': self.detail_combo.currentText(), 'bodies': bodies_data},
+                      f, indent=2)
 
     def import_layout(self):
         path, _ = QFileDialog.getOpenFileName(self, "Import Layout", "./savedata", "Layout Files (*.json)")
@@ -771,10 +782,7 @@ class MainWindow(QMainWindow):
             return
 
         # Stop and clear current scene
-        self.running = False
-        self.play_btn.setChecked(False)
-        self.play_btn.setText("▶ Play")
-        self.timer.stop()
+        self._pause_simulation()
         self._armor_rebuild_timer.stop()
         self._armor_rebuild_body = None
         self.selected = None
@@ -789,16 +797,22 @@ class MainWindow(QMainWindow):
         self.simulation_started = False
         self.clear_props()
 
+        detail = data.get('detail', DEFAULT_DETAIL)
+        if detail not in DETAIL_LEVELS:
+            detail = DEFAULT_DETAIL
+        with QSignalBlocker(self.detail_combo):
+            self.detail_combo.setCurrentText(detail)
+
         for entry in data.get('bodies', []):
             if entry['type'] == 'penetrator':
-                body = Penetrator(entry['name'])
+                body = Penetrator(entry['name'], detail=detail)
                 body.material = entry['material']
                 body.length = entry['length']
                 body.diameter = entry['diameter']
                 body.initial_velocity = entry['initial_velocity']
                 body.particle_size = entry.get('particle_size', body.particle_size)
             else:
-                body = ArmorPlate(entry['name'])
+                body = ArmorPlate(entry['name'], detail=detail)
                 body.material = entry['material']
                 body.width = entry['width']
                 body.height = entry['height']
@@ -872,16 +886,31 @@ class MainWindow(QMainWindow):
             self.gizmo.detach()
             self.timer.start(16)
         else:
-            self.play_btn.setText("▶ Play")
-            self.timer.stop()
+            self._pause_simulation()
             if self.selected:
                 self.gizmo.attach(self.selected)
 
-    def reset_sim(self):
+    def _pause_simulation(self):
         self.running = False
         self.play_btn.setChecked(False)
         self.play_btn.setText("▶ Play")
         self.timer.stop()
+
+    def change_detail(self, detail):
+        self._pause_simulation()
+        self.physics.reset()
+        self.simulation_started = False
+        for body in self.physics.bodies:
+            body.detail = detail
+            self._rebuild_body(body)
+        if self.selected:
+            self.show_props(self.selected)
+            self.gizmo.attach(self.selected)
+        self.time_lbl.setText("Time: 0.0 μs")
+        self.pen_lbl.setText("Pen: 0 mm")
+
+    def reset_sim(self):
+        self._pause_simulation()
         self._do_armor_rebuild()
         for b in self.physics.bodies:
             if not hasattr(b, '_snap_rest_pos'):

@@ -8,11 +8,30 @@ from materials import MATERIALS
 from surface_mesh import cylinder_faces
 
 
+DETAIL_LEVELS = ('Low', 'Medium', 'High', 'Ultra')
+DEFAULT_DETAIL = 'Medium'
+
+
+def _detail_spacing(medium, detail, material):
+    if detail == DEFAULT_DETAIL or MATERIALS[material].get('explosive'):
+        return medium
+    if detail == 'Low':
+        # Keep the effective same-body cutoff within the solver's search radius.
+        return min(medium * 1.5, 0.014)
+    ultra = min(medium, 0.010)
+    if detail == 'High':
+        return (medium + ultra) / 2
+    if detail == 'Ultra':
+        return ultra
+    return medium
+
+
 class SoftBody:
-    def __init__(self, name, body_type, material='steel'):
+    def __init__(self, name, body_type, material='steel', *, detail=DEFAULT_DETAIL):
         self.name = name
         self.body_type = body_type
         self.material = material
+        self.detail = detail
         self.selected = False
 
         self.pos = None
@@ -233,8 +252,8 @@ def create_plate_body(width, height, thickness, angle_deg, material, spacing=Non
 
 
 class Penetrator(SoftBody):
-    def __init__(self, name="Penetrator"):
-        super().__init__(name, "penetrator", "tungsten")
+    def __init__(self, name="Penetrator", *, detail=DEFAULT_DETAIL):
+        super().__init__(name, "penetrator", "tungsten", detail=detail)
         self.length = 0.055
         self.diameter = 0.030
         self.initial_velocity = 900.0
@@ -243,7 +262,8 @@ class Penetrator(SoftBody):
 
     def rebuild(self):
         saved_center = np.mean(self.rest_pos, axis=0) if self.rest_pos is not None else None
-        spacing = float(np.clip(self.diameter / 2.5, 0.007, 0.012))
+        medium = float(np.clip(self.diameter / 2.5, 0.007, 0.012))
+        spacing = _detail_spacing(medium, self.detail, self.material)
         self.particle_spacing = spacing
         pos, vel, mass, springs, rest, stiff = create_cylinder_body(
             self.length, self.diameter, self.material, spacing=spacing)
@@ -267,8 +287,8 @@ class Penetrator(SoftBody):
 
 
 class ArmorPlate(SoftBody):
-    def __init__(self, name="Armor"):
-        super().__init__(name, "armor", "steel")
+    def __init__(self, name="Armor", *, detail=DEFAULT_DETAIL):
+        super().__init__(name, "armor", "steel", detail=detail)
         self.width = 0.18
         self.height = 0.14
         self.thickness = 0.038
@@ -288,7 +308,8 @@ class ArmorPlate(SoftBody):
 
     def rebuild(self):
         saved_center = np.mean(self.rest_pos, axis=0) if self.rest_pos is not None else None
-        spacing = float(np.clip(min(self.thickness / 2.5, self.width / 10.0, self.height / 10.0), 0.007, 0.012))
+        medium = float(np.clip(min(self.thickness / 2.5, self.width / 10.0, self.height / 10.0), 0.007, 0.012))
+        spacing = _detail_spacing(medium, self.detail, self.material)
         self.particle_spacing = spacing
         self.lattice_shape = _plate_lattice_shape(self.width, self.height, self.thickness, spacing)
         if self.bend_axis not in ('width', 'height'):

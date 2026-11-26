@@ -17,9 +17,15 @@ middle of the plate. Use a bend angle of zero for a flat plate.
 Use **3D Style** to switch between Solid exterior faces and Wireframe particles
 and bonds. The three 2D panels in Quad View display particles for editing.
 **Preview Burst** plays a visual effect at the selected body or camera target.
-Dimensions are measured at particle centers. Spacing controls sampling
-resolution and can affect simulation results by changing particle counts and
-connections.
+Dimensions are measured at particle centers.
+
+Use **Detail** in the Simulation panel to change node density for inert bodies.
+Medium uses the original sampling, Low is coarser, and High is halfway from
+Medium to Ultra. Ultra has a nominal 10 mm spacing and retains finer sampling
+where Medium already uses it. The nodes fit the shape's exact dimensions, so
+actual gaps can vary. Changing detail pauses and resets the simulation. Finer
+meshes can run more slowly and affect results by changing particle counts and
+bonds. Exported layouts store the setting, and older layouts open at Medium.
 
 **Geometry regression checks:** `python -m unittest discover -s tests -v`
 
