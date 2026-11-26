@@ -16,7 +16,9 @@ middle of the plate. Use a bend angle of zero for a flat plate.
 
 Use **3D Style** to switch between Solid exterior faces, Wireframe particles
 and bonds, and Surface Points. The three 2D panels in Quad View display
-particles for editing.
+particles for editing. The Scene panel's **3D display** column shows the count
+for the active 3D style. Hover over a row to see the simulation node and bond
+counts alongside the display counts.
 **Preview Burst** plays a visual effect at the selected body or camera target.
 Dimensions are measured at particle centers.
 

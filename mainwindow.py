@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QSlider, QComboBox, QGroupBox, QSpinBox,
     QTreeWidget, QTreeWidgetItem, QScrollArea, QDockWidget, QCheckBox,
-    QGridLayout, QFileDialog, QMessageBox
+    QGridLayout, QFileDialog, QMessageBox, QHeaderView
 )
 from PyQt5.QtCore import Qt, QSignalBlocker, QTimer
 from PyQt5.QtGui import QColor, QPainter, QLinearGradient, QFont
@@ -147,6 +147,7 @@ class MainWindow(QMainWindow):
         self.ortho_views = []
         self.show_penetrator = True
         self.show_armor = True
+        self._scene_items = {}
 
         self.setup_ui()
         self.timer = QTimer()
@@ -184,7 +185,12 @@ class MainWindow(QMainWindow):
         scene_l.setContentsMargins(4, 4, 4, 4)
 
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Objects"])
+        self.tree.setHeaderLabels(["Objects", "3D display"])
+        self.tree.setWordWrap(True)
+        header = self.tree.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.tree.itemClicked.connect(self.on_select)
         scene_l.addWidget(self.tree)
 
@@ -234,6 +240,7 @@ class MainWindow(QMainWindow):
         props_scroll.setWidget(props_w)
         props_dock.setWidget(props_scroll)
         self.addDockWidget(Qt.RightDockWidgetArea, props_dock)
+        self.resizeDocks([scene_dock], [300], Qt.Horizontal)
 
         tl_dock = QDockWidget("Simulation", self)
         tl_dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
@@ -502,6 +509,7 @@ class MainWindow(QMainWindow):
             body.surface.hide()
         if not visible:
             body.scatter.hide()
+            self._update_scene_display(body)
             return
 
         colors = np.zeros((body.n_particles, 4), dtype=np.float32)
@@ -538,6 +546,7 @@ class MainWindow(QMainWindow):
         if show_lines and body.lines is not None:
             line_positions = body.pos[body.springs.ravel()]
             body.lines.setData(pos=line_positions)
+        self._update_scene_display(body)
 
     def rebuild_visuals(self, body):
         self.remove_visuals(body)
@@ -552,17 +561,42 @@ class MainWindow(QMainWindow):
         self._sync_ortho_views()
 
     def update_tree(self):
+        self._scene_items.clear()
         self.tree.clear()
         root = QTreeWidgetItem(["Scene"])
         self.tree.addTopLevelItem(root)
         for i, body in enumerate(self.physics.bodies):
-            springs = len(body.springs) if body.springs is not None else 0
-            item = QTreeWidgetItem([f"{body.name} ({body.n_particles}p, {springs}s)"])
+            item = QTreeWidgetItem([body.name])
             item.setData(0, Qt.UserRole, i)
+            item.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
             c = QColor(255, 180, 80) if body.body_type == 'penetrator' else QColor(120, 160, 220)
             item.setForeground(0, c)
             root.addChild(item)
+            self._scene_items[body] = item
+            self._update_scene_display(body)
         root.setExpanded(True)
+
+    def _update_scene_display(self, body):
+        item = self._scene_items.get(body)
+        if item is None or body.scatter is None:
+            return
+        faces = body.surface.displayed_triangles
+        points = len(body.scatter.pos) if body.scatter.visible() else 0
+        counts = []
+        if faces:
+            counts.append(f"{faces:,} {'face' if faces == 1 else 'faces'}")
+        if points:
+            counts.append(f"{points:,} {'point' if points == 1 else 'points'}")
+        summary = "\n".join(counts) or "Hidden"
+        if item.text(1) != summary:
+            item.setText(1, summary)
+
+        bonds = len(body.springs) if body.springs is not None else 0
+        tooltip = (f"{body.name}\n{body.n_particles:,} simulation nodes\n{bonds:,} simulation bonds\n"
+                   f"{faces:,} display triangles\n{points:,} display points")
+        if item.toolTip(0) != tooltip:
+            item.setToolTip(0, tooltip)
+            item.setToolTip(1, tooltip)
 
     def on_select(self, item, col):
         idx = item.data(0, Qt.UserRole)
@@ -588,8 +622,9 @@ class MainWindow(QMainWindow):
         info = QGroupBox("Info")
         il = QVBoxLayout(info)
         il.addWidget(QLabel(f"Name: {body.name}"))
-        il.addWidget(QLabel(f"Particles: {body.n_particles}"))
-        il.addWidget(QLabel(f"Springs: {len(body.springs) if body.springs is not None else 0}"))
+        il.addWidget(QLabel(f"{body.n_particles:,} simulation nodes"))
+        bonds = len(body.springs) if body.springs is not None else 0
+        il.addWidget(QLabel(f"{bonds:,} simulation bonds"))
         self.props_box.addWidget(info)
 
         mat_grp = QGroupBox("Material")

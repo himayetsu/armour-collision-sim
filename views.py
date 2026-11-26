@@ -115,6 +115,10 @@ class BodySurface(gl.GLMeshItem):
             self._refined_quads, self._refined_triangles = quads, triangles
         return self._refined
 
+    @property
+    def displayed_triangles(self):
+        return len(self._faces) if self.visible() and self._faces is not None else 0
+
     def update_body(self, body, colors):
         """Upload the visible shell and return particle indices for loose geometry."""
         self.topology.update(body.springs, body.pos)
@@ -146,7 +150,9 @@ class BodySurface(gl.GLMeshItem):
             return body.pos[loose], colors[loose]
 
         if self._sample_faces is not faces:
-            rest = refined.sample(body.rest_pos) if refined is not None else body.rest_pos
+            rest = self.topology.rest_positions
+            if refined is not None:
+                rest = refined.sample(rest)
             self._point_sampler = SurfacePointSampler(rest, faces, spacing=self._point_spacing)
             self._sample_faces = faces
             self._sample_input = None

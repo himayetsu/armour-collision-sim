@@ -37,6 +37,7 @@ class SoftBody:
         self.pos = None
         self.vel = None
         self.rest_pos = None
+        self.surface_rest_pos = None
         self.mass = None
         self.radius = None
         self.active = None
@@ -268,7 +269,9 @@ class Penetrator(SoftBody):
         pos, vel, mass, springs, rest, stiff = create_cylinder_body(
             self.length, self.diameter, self.material, spacing=spacing)
         self.surface_faces, self.surface_quad_pairs = cylinder_surface(pos)
-        self.pos = pos
+        self.surface_rest_pos = pos
+        self.surface_rest_pos.setflags(write=False)
+        self.pos = pos.copy()
         self.vel = vel
         self.rest_pos = pos.copy()
         self.mass = mass
@@ -320,7 +323,9 @@ class ArmorPlate(SoftBody):
             self.width, self.height, self.thickness, self.angle, self.material,
             spacing=spacing, anchored=self.anchored, pitch_deg=self.pitch, roll_deg=self.roll,
             bend_deg=self.bend, bend_axis=self.bend_axis)
-        self.pos = pos
+        self.surface_rest_pos = pos
+        self.surface_rest_pos.setflags(write=False)
+        self.pos = pos.copy()
         self.vel = vel
         self.rest_pos = pos.copy()
         self.mass = mass

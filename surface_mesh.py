@@ -198,11 +198,13 @@ class BodySurfaceTopology:
         self._local_faces = local_indices.reshape(-1, 3)
         self._surface_particles = np.zeros(self.particle_count, dtype=bool)
         self._surface_particles[self.vertices] = True
-        rest_positions = getattr(body, 'rest_pos', None)
+        self.rest_positions = getattr(body, 'surface_rest_pos', None)
+        if self.rest_positions is None:
+            self.rest_positions = getattr(body, 'rest_pos', None)
         self._stretch_limit_sq = None
-        if rest_positions is not None:
+        if self.rest_positions is not None:
             self._edge_starts, self._edge_ends = np.divmod(self._edge_keys, max(1, self.particle_count))
-            delta = rest_positions[self._edge_ends] - rest_positions[self._edge_starts]
+            delta = self.rest_positions[self._edge_ends] - self.rest_positions[self._edge_starts]
             self._stretch_limit_sq = np.einsum('ij,ij->i', delta, delta) * self._MAX_UNSUPPORTED_EDGE_STRETCH**2
         self._face_mask = None
         self._quad_mask = None
