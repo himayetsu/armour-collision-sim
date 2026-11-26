@@ -79,6 +79,68 @@ def _edge_keys(a, b, particle_count):
     return np.minimum(a, b).astype(np.int64) * particle_count + np.maximum(a, b)
 
 
+class SurfacePointSampler:
+    """Cache display samples on the exterior faces of a deformable mesh."""
+
+    def __init__(self, rest_positions, faces, spacing=0.002, max_points=100_000):
+        if not np.isfinite(spacing) or spacing <= 0 or max_points < 0:
+            raise ValueError('Surface sampling needs positive spacing and a nonnegative point limit')
+        faces = np.asarray(faces, dtype=np.intp).reshape(-1, 3)
+        rest_positions = np.asarray(rest_positions)
+        corners = np.unique(faces)
+        face_edges = np.sort(np.stack((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]), axis=1), axis=2)
+        edges, face_edge_indices = np.unique(face_edges.reshape(-1, 2), axis=0, return_inverse=True)
+        edge_lengths = np.linalg.norm(rest_positions[edges[:, 1]] - rest_positions[edges[:, 0]], axis=1)
+        edge_intervals = np.maximum(1, np.ceil(edge_lengths / spacing).astype(np.int64))
+        face_intervals = edge_intervals[face_edge_indices.reshape(-1, 3)].max(axis=1)
+
+        # Share edge samples across adjacent faces. A face with n intervals
+        # contributes (n - 1)(n - 2)/2 samples strictly inside its edges.
+        interior_counts = (face_intervals - 1) * (face_intervals - 2) // 2
+        counts = np.concatenate((np.ones(len(corners), dtype=np.int64), edge_intervals - 1, interior_counts))
+        ends = np.cumsum(counts)
+        total = int(ends[-1]) if len(ends) else 0
+        if total > max_points:
+            # Select across the full sample range before allocating anything
+            # proportional to the potentially oversized lattice.
+            chosen = np.linspace(0, total - 1, max_points, dtype=np.int64)
+        else:
+            chosen = np.arange(total)
+        groups = np.searchsorted(ends, chosen, side='right')
+        offsets = chosen - (ends - counts)[groups]
+        self._indices = np.empty((len(chosen), 3), dtype=np.intp)
+        self._weights = np.zeros((len(chosen), 3), dtype=np.float32)
+
+        edge_start = len(corners)
+        face_start = edge_start + len(edges)
+        on_corner = groups < edge_start
+        self._indices[on_corner] = corners[groups[on_corner], None]
+        self._weights[on_corner, 0] = 1
+
+        on_edge = (groups >= edge_start) & (groups < face_start)
+        edge_ids = groups[on_edge] - edge_start
+        edge_fraction = (offsets[on_edge] + 1) / edge_intervals[edge_ids]
+        self._indices[on_edge] = edges[edge_ids][:, [0, 1, 0]]
+        self._weights[on_edge, 0] = 1 - edge_fraction
+        self._weights[on_edge, 1] = edge_fraction
+
+        in_face = groups >= face_start
+        face_ids = groups[in_face] - face_start
+        # Count rows backward from the final row, which has a single point.
+        # The triangular-number inverse finds the row for each selected index.
+        reverse_offset = interior_counts[face_ids] - offsets[in_face] - 1
+        row_width = ((np.sqrt(8 * reverse_offset + 1) + 1) / 2).astype(np.int64)
+        intervals = face_intervals[face_ids]
+        row = (intervals - row_width - 1) / intervals
+        column = (row_width * (row_width + 1) // 2 - reverse_offset) / intervals
+        self._indices[in_face] = faces[face_ids]
+        self._weights[in_face] = np.column_stack((1 - row - column, row, column))
+
+    def sample(self, values):
+        """Interpolate an (n_vertices, n_attributes) array at the display points."""
+        return np.einsum('ij,ijk->ik', self._weights, np.asarray(values)[self._indices])
+
+
 class BodySurfaceTopology:
     """Cache the rest shell and discard facets whose supporting bonds break."""
 

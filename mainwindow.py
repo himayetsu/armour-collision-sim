@@ -142,7 +142,7 @@ class MainWindow(QMainWindow):
         self.simulation_started = False
         self.selected = None
         self.show_springs = True
-        self.solid_view = True
+        self.render_style = "Solid"
         self.quad_mode = False
         self.ortho_views = []
         self.show_penetrator = True
@@ -267,7 +267,7 @@ class MainWindow(QMainWindow):
         self.detail_combo = QComboBox()
         self.detail_combo.addItems(DETAIL_LEVELS)
         self.detail_combo.setCurrentText(DEFAULT_DETAIL)
-        self.detail_combo.setToolTip("Particle sampling detail. Ultra targets 10 mm nominal spacing. "
+        self.detail_combo.setToolTip("Ultra adds 2 mm visual sampling in the Surface Points view. "
                                       "Changing detail pauses and resets the simulation.")
         self.detail_combo.currentTextChanged.connect(self.change_detail)
         row1.addWidget(self.detail_combo)
@@ -307,7 +307,7 @@ class MainWindow(QMainWindow):
 
         row2.addWidget(QLabel("3D Style"))
         self.render_style_combo = QComboBox()
-        self.render_style_combo.addItems(["Solid", "Wireframe"])
+        self.render_style_combo.addItems(["Solid", "Wireframe", "Surface Points"])
         self.render_style_combo.currentTextChanged.connect(self.set_render_style)
         row2.addWidget(self.render_style_combo)
 
@@ -465,7 +465,7 @@ class MainWindow(QMainWindow):
         body.surface = body.scatter = body.lines = None
 
     def set_render_style(self, style):
-        self.solid_view = style == "Solid"
+        self.render_style = style
         for body in self.physics.bodies:
             self.update_visuals(body)
 
@@ -493,11 +493,11 @@ class MainWindow(QMainWindow):
 
         visible = (self.show_penetrator if body.body_type == 'penetrator'
                    else self.show_armor)
-        show_lines = (visible and not self.solid_view and self.show_springs
+        show_lines = (visible and self.render_style == "Wireframe" and self.show_springs
                       and body.springs is not None and len(body.springs) > 0)
         if body.lines is not None:
             body.lines.setVisible(show_lines)
-        if not visible or not self.solid_view:
+        if not visible or self.render_style != "Solid":
             body.surface.hide()
         if not visible:
             body.scatter.hide()
@@ -520,14 +520,20 @@ class MainWindow(QMainWindow):
         colors[:, 3] = 1.0
         if body.selected:
             colors[:, :3] = np.clip(colors[:, :3] + 0.1, 0, 1)
-        if self.solid_view:
+        if self.render_style == "Solid":
             particles = body.surface.update_body(body, colors)
             body.scatter.setVisible(bool(len(particles)))
             if len(particles):
-                body.scatter.setData(pos=body.pos[particles], color=colors[particles])
+                body.scatter.setData(pos=body.pos[particles], color=colors[particles], size=6)
+        elif self.render_style == "Surface Points":
+            points, point_colors = body.surface.surface_points(body, colors)
+            size = 2 if body.detail == 'Ultra' else 6
+            body.scatter.setVisible(bool(len(points)))
+            if points is not body.scatter.pos or point_colors is not body.scatter.color:
+                body.scatter.setData(pos=points, color=point_colors, size=size)
         else:
             body.scatter.show()
-            body.scatter.setData(pos=body.pos, color=colors)
+            body.scatter.setData(pos=body.pos, color=colors, size=6)
 
         if show_lines and body.lines is not None:
             line_positions = body.pos[body.springs.ravel()]
@@ -540,7 +546,7 @@ class MainWindow(QMainWindow):
 
     def toggle_springs(self, show):
         self.show_springs = show
-        if not self.solid_view:
+        if self.render_style == "Wireframe":
             for body in self.physics.bodies:
                 self.update_visuals(body)
         self._sync_ortho_views()

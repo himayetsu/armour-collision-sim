@@ -11,7 +11,7 @@ from OpenGL import GL
 
 from gizmo import TransformGizmo
 from materials import MATERIALS
-from surface_mesh import BodySurfaceTopology
+from surface_mesh import BodySurfaceTopology, SurfacePointSampler
 
 
 # Velocity → colour ramp (same stops as the 3D scatter in mainwindow.py).
@@ -45,6 +45,9 @@ class BodySurface(gl.GLMeshItem):
         self._positions = None
         self._colors = None
         self._faces = None
+        self._sample_faces = None
+        self._sample_input = None
+        self._sample_buffers = None
 
     def update_body(self, body, colors):
         """Upload the visible shell and return particle indices for loose geometry."""
@@ -61,6 +64,30 @@ class BodySurface(gl.GLMeshItem):
                 self._colors = colors
                 self._faces = faces
         return self.topology.particles
+
+    def surface_points(self, body, colors):
+        self.topology.update(body.springs)
+        faces = self.topology.faces
+        loose = self.topology.particles
+        if body.detail != 'Ultra' or not len(faces):
+            vertices = np.union1d(self.topology.vertices, loose)
+            return body.pos[vertices], colors[vertices]
+
+        if self._sample_faces is not faces:
+            if not np.array_equal(self._sample_faces, faces):
+                self._point_sampler = SurfacePointSampler(body.rest_pos, faces)
+            self._sample_faces = faces
+            self._sample_input = None
+
+        values = np.column_stack((body.pos, colors))
+        if not np.array_equal(self._sample_input, values):
+            samples = self._point_sampler.sample(values)
+            if len(loose):
+                samples = np.concatenate((samples, values[loose]))
+            self._sample_input = values
+            self._sample_buffers = (np.ascontiguousarray(samples[:, :3], dtype=np.float32),
+                                    np.ascontiguousarray(samples[:, 3:], dtype=np.float32))
+        return self._sample_buffers
 
 
 class SimViewWidget(gl.GLViewWidget):

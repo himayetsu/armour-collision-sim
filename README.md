@@ -14,18 +14,21 @@ controls. In **Curvature**, choose whether to bend across the width or height
 and set the total bend angle. The selected dimension is the arc length along the
 middle of the plate. Use a bend angle of zero for a flat plate.
 
-Use **3D Style** to switch between Solid exterior faces and Wireframe particles
-and bonds. The three 2D panels in Quad View display particles for editing.
+Use **3D Style** to switch between Solid exterior faces, Wireframe particles
+and bonds, and Surface Points. The three 2D panels in Quad View display
+particles for editing.
 **Preview Burst** plays a visual effect at the selected body or camera target.
 Dimensions are measured at particle centers.
 
 Use **Detail** in the Simulation panel to change node density for inert bodies.
-Medium uses the original sampling, Low is coarser, and High is halfway from
-Medium to Ultra. Ultra has a nominal 10 mm spacing and retains finer sampling
-where Medium already uses it. The nodes fit the shape's exact dimensions, so
-actual gaps can vary. Changing detail pauses and resets the simulation. Finer
-meshes can run more slowly and affect results by changing particle counts and
-bonds. Exported layouts store the setting, and older layouts open at Medium.
+Medium uses the original sampling and Low is coarser. Ultra uses a nominal
+10 mm simulation spacing or Medium's spacing where it is finer. High is halfway
+between the Medium and Ultra simulation spacings. Ultra targets 2 mm visual
+spacing in **Surface Points**, with wider gaps on large surfaces to limit the
+drawing load. Samples fit the shape's exact dimensions, so actual gaps can vary.
+Changing detail pauses and resets the simulation. Finer simulation meshes can
+run more slowly and affect results by changing particle counts and bonds.
+Exported layouts store the setting, and older layouts open at Medium.
 
 **Geometry regression checks:** `python -m unittest discover -s tests -v`
 
