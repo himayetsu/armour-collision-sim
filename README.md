@@ -8,10 +8,17 @@
 
 **Geometry:** Dimensions are entered in millimeters and stored in meters. Cylinder
 rings reach the requested radius, including diameters smaller than the lattice
-spacing. Plate lattices span their exact width, height, and thickness; spacing
-controls sampling resolution. Dimensions refer to particle-center bounds, while
-the visible dots are fixed-size screen markers. Changes to the sampling also
-change particle counts and connections, so simulation results can change.
+spacing. Flat plate lattices span their exact width, height, and thickness.
+Select a plate in the Scene to set yaw, pitch, and roll in its **Orientation**
+controls. In **Curvature**, choose whether to bend across the width or height
+and set the total bend angle. The selected dimension is the arc length along the
+middle of the plate. Use a bend angle of zero for a flat plate.
+
+Use **3D Style** to switch between Solid exterior faces and Wireframe particles
+and bonds. The three 2D panels in Quad View display particles for editing.
+Dimensions are measured at particle centers. Spacing controls sampling
+resolution and can affect simulation results by changing particle counts and
+connections.
 
 **Geometry regression checks:** `python -m unittest discover -s tests -v`
 

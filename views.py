@@ -7,9 +7,11 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QMatrix4x4, QVector3D, QPainter, QPainterPath, QPen, QBrush
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
+from OpenGL import GL
 
 from gizmo import TransformGizmo
 from materials import MATERIALS
+from surface_mesh import BodySurfaceTopology
 
 
 # Velocity → colour ramp (same stops as the 3D scatter in mainwindow.py).
@@ -33,6 +35,32 @@ VIEW_LABELS = {
     'right': 'Front',
     'top': 'Top',
 }
+
+
+class BodySurface(gl.GLMeshItem):
+    def __init__(self, body):
+        super().__init__(smooth=False, shader='shaded', glOptions='opaque')
+        self.updateGLOptions({GL.GL_CULL_FACE: True})
+        self.topology = BodySurfaceTopology(body)
+        self._positions = None
+        self._colors = None
+        self._faces = None
+
+    def update_body(self, body, colors):
+        """Upload the visible shell and return particle indices for loose geometry."""
+        self.topology.update(body.springs)
+        faces = self.topology.mesh_faces
+        self.setVisible(bool(len(faces)))
+        if len(faces):
+            positions = body.pos[self.topology.vertices]
+            colors = colors[self.topology.vertices]
+            if (self._faces is not faces or not np.array_equal(positions, self._positions)
+                    or not np.array_equal(colors, self._colors)):
+                self.setMeshData(vertexes=positions, faces=faces, vertexColors=colors)
+                self._positions = positions
+                self._colors = colors
+                self._faces = faces
+        return self.topology.particles
 
 
 class SimViewWidget(gl.GLViewWidget):
@@ -131,6 +159,9 @@ class SimViewWidget(gl.GLViewWidget):
             self._drag_body.rest_pos = self._drag_rest0 + offset
             if self.gizmo:
                 self.gizmo.update_position()
+            main_window = getattr(self, 'main_window', None)
+            if main_window:
+                main_window.update_visuals(self._drag_body)
             self.update()
             ev.accept()
             return
@@ -221,6 +252,8 @@ class OrthoCanvas(QWidget):
         self.mode = mode
         self.bodies = []
         self.show_springs = True
+        self.show_penetrator = True
+        self.show_armor = True
         self.setMinimumSize(100, 100)
         self.setStyleSheet("background: #16181c;")
 
@@ -261,7 +294,8 @@ class OrthoCanvas(QWidget):
                     p.drawLine(0, int(gy), w, int(gy))
 
         for body in self.bodies:
-            if body.pos is None:
+            visible = self.show_penetrator if body.body_type == 'penetrator' else self.show_armor
+            if body.pos is None or not visible:
                 continue
             mat = MATERIALS[body.material]
             base_color = mat['color']

@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from bodies import create_cylinder_body, create_plate_body
+from bodies import ArmorPlate, create_cylinder_body, create_plate_body
 
 
 class PlateGeometryTests(unittest.TestCase):
@@ -36,6 +36,83 @@ class PlateGeometryTests(unittest.TestCase):
                 self.assertAlmostEqual(
                     float(np.ptp(pos[:, 0])), thickness, delta=1e-7,
                     msg=f'{width} m by {height} m plate must retain its requested thickness')
+
+
+class CurvedPlateGeometryTests(unittest.TestCase):
+    def test_signed_bend_follows_an_arc_and_preserves_normal_thickness(self):
+        width, height, thickness = 0.120, 0.080, 0.020
+        for axis, span in (('width', width), ('height', height)):
+            for bend in (-90, 90):
+                with self.subTest(axis=axis, bend=bend):
+                    pos = create_plate_body(width, height, thickness, 0, 'steel', spacing=0.010,
+                                            bend_axis=axis, bend_deg=bend)[0].reshape(3, 9, 13, 3)
+                    layers = pos[:, 4, :, :] if axis == 'width' else pos[:, :, 6, :]
+                    transverse = 2 if axis == 'width' else 1
+                    radius = span / np.radians(bend)
+                    center_x = 0.22 + thickness / 2 + radius
+                    mid_layer_radius = np.hypot(layers[1, :, 0] - center_x, layers[1, :, transverse])
+                    np.testing.assert_allclose(mid_layer_radius, abs(radius), rtol=0, atol=1e-7,
+                                               err_msg='The middle layer must lie on the requested arc')
+                    bend_rise = layers[1, 0, 0] - layers[1, layers.shape[1] // 2, 0]
+                    self.assertGreater(np.sign(bend) * bend_rise, 0,
+                                       'The bend sign must select the direction of the arc')
+                    ray_lengths = np.linalg.norm(layers[-1] - layers[0], axis=1)
+                    np.testing.assert_allclose(ray_lengths, thickness, rtol=0, atol=1e-7,
+                                               err_msg='Thickness must remain constant along each local normal')
+
+    def test_bend_updates_spring_lengths_without_dropping_lattice_bonds_or_anchors(self):
+        args = (0.114, 0.080, 0.036, 27, 'steel')
+        flat = create_plate_body(*args, spacing=0.012)
+        pos, _, _, springs, rest_lengths, _, static = create_plate_body(*args, spacing=0.012, bend_deg=175)
+        np.testing.assert_array_equal(springs, flat[3], err_msg='Bending must preserve the flat bond graph')
+        np.testing.assert_array_equal(static, flat[6], err_msg='Bending must keep the same anchored edges')
+        self.assertFalse(np.array_equal(rest_lengths, flat[4]), 'Bending must update spring rest lengths')
+        np.testing.assert_allclose(rest_lengths, np.linalg.norm(pos[springs[:, 1]] - pos[springs[:, 0]], axis=1),
+                                   rtol=1e-6, atol=1e-9, err_msg='Bonds must start at their curved geometry lengths')
+
+
+class PlateOrientationTests(unittest.TestCase):
+    def test_euler_axes_preserve_legacy_yaw_and_use_independent_pitch_and_roll(self):
+        args = (0.080, 0.060, 0.016)
+        pivot = np.array((0.22, 0, 0))
+        local = create_plate_body(*args, 0, 'steel')[0] - pivot
+        x, y, z = local.T
+        cases = (
+            ('yaw', 90, {}, (z, y, -x)),
+            ('pitch', 0, {'pitch_deg': 90}, (-y, x, z)),
+            ('roll', 0, {'roll_deg': 90}, (x, -z, y)),
+            ('roll, pitch, and yaw', 90, {'pitch_deg': 90, 'roll_deg': 90}, (y, x, -z)),
+        )
+        for orientation, yaw, angles, expected in cases:
+            with self.subTest(orientation=orientation):
+                pos = create_plate_body(*args, yaw, 'steel', **angles)[0]
+                np.testing.assert_allclose(pos - pivot, np.column_stack(expected), rtol=0, atol=1e-7,
+                                           err_msg=f'{orientation} must use the documented plate axes and order')
+
+    def test_rigid_pitch_and_roll_preserve_plate_spring_parameters(self):
+        for bend in (0, 75):
+            with self.subTest(bend=bend):
+                args = (0.080, 0.060, 0.016, 34, 'steel')
+                original = create_plate_body(*args, bend_deg=bend)
+                rotated = create_plate_body(*args, bend_deg=bend, pitch_deg=82, roll_deg=-53)
+                for array_index, metric in ((3, 'indices'), (4, 'rest lengths'), (5, 'stiffness')):
+                    np.testing.assert_array_equal(rotated[array_index], original[array_index],
+                                                  err_msg=f'Rigid rotations must preserve spring {metric}')
+
+    def test_rebuilding_an_edited_plate_preserves_its_moved_center(self):
+        plate = ArmorPlate()
+        plate.pos += (0.09, -0.04, 0.05)
+        plate.rest_pos[:] = plate.pos
+        center = plate.pos.mean(axis=0)
+        plate.angle = 135
+        plate.pitch = 25
+        plate.roll = -35
+        plate.bend = 80
+        plate.bend_axis = 'height'
+        plate.rebuild()
+        np.testing.assert_allclose(plate.pos.mean(axis=0), center, rtol=0, atol=1e-6,
+                                   err_msg='Changing shape and orientation must preserve the scene placement')
+        self.assertEqual(plate.n_particles, np.prod(plate.lattice_shape))
 
 
 class CylinderGeometryTests(unittest.TestCase):

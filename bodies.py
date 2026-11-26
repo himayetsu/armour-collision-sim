@@ -5,6 +5,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from materials import MATERIALS
+from surface_mesh import cylinder_faces
 
 
 class SoftBody:
@@ -30,6 +31,7 @@ class SoftBody:
 
         self.scatter = None
         self.lines = None
+        self.surface = None
 
         self.initial_velocity = 1700.0
         self.particle_size = 0.006
@@ -113,41 +115,64 @@ def create_cylinder_body(length, diameter, material, spacing=None):
     return pos, vel, mass, spring_indices, spring_rest, spring_stiff
 
 
-def create_plate_body(width, height, thickness, angle_deg, material, spacing=None, anchored=True):
+def _plate_lattice_shape(width, height, thickness, spacing):
+    return tuple(max(2, int(round(size / spacing)) + 1) for size in (thickness, height, width))
+
+
+def _plate_bend_limit(span, thickness):
+    # Keep the middle radius at least one thickness so the inner layers retain
+    # at least half of the middle surface's arc length.
+    return int(min(180, np.degrees(span / thickness)))
+
+
+def _bend_plate_axis(depth, transverse, span, thickness, bend_deg):
+    radius = span / np.radians(bend_deg)
+    angle = transverse / radius
+    offset = depth - thickness / 2
+    # 2*sin(angle/2)**2 is 1-cos(angle), with less cancellation at small bends.
+    bent_depth = thickness / 2 + 2 * radius * np.sin(angle / 2) ** 2 + offset * np.cos(angle)
+    bent_transverse = (radius - offset) * np.sin(angle)
+    return bent_depth, bent_transverse
+
+
+def _orient_plate(depth, vertical, across, yaw_deg, pitch_deg=0, roll_deg=0):
+    # The local plate normal, height, and width start along X, Y, and Z.
+    # Apply roll around X, pitch around Z, then the existing yaw around Y.
+    if roll_deg:
+        roll = np.radians(roll_deg)
+        c, s = np.cos(roll), np.sin(roll)
+        vertical, across = c * vertical - s * across, s * vertical + c * across
+    if pitch_deg:
+        pitch = np.radians(pitch_deg)
+        c, s = np.cos(pitch), np.sin(pitch)
+        depth, vertical = c * depth - s * vertical, s * depth + c * vertical
+    yaw = np.radians(yaw_deg)
+    c, s = np.cos(yaw), np.sin(yaw)
+    return np.column_stack((depth * c + across * s + 0.22, vertical,
+                            -depth * s + across * c)).astype(np.float32)
+
+
+def create_plate_body(width, height, thickness, angle_deg, material, spacing=None, anchored=True,
+                      *, pitch_deg=0, roll_deg=0, bend_deg=0, bend_axis='width'):
     if spacing is None:
         spacing = float(np.clip(min(thickness / 2.5, width / 10.0, height / 10.0), 0.007, 0.012))
     mat = MATERIALS[material]
-    angle = np.radians(angle_deg)
-    cos_a, sin_a = np.cos(angle), np.sin(angle)
-
-    particles = []
-    static_particles = []
-    nx = max(2, int(round(width / spacing)) + 1)
-    ny = max(2, int(round(height / spacing)) + 1)
-    nz = max(2, int(round(thickness / spacing)) + 1)
+    nz, ny, nx = _plate_lattice_shape(width, height, thickness, spacing)
     # Fit each axis to its requested endpoints. Multiplying lattice indices by
     # a shared spacing made dimensions depend on rounding along the other axes.
     xs = np.linspace(-width / 2, width / 2, nx)
     ys = np.linspace(-height / 2, height / 2, ny)
     zs = np.linspace(0, thickness, nz)
 
-    for iz in range(nz):
-        for iy in range(ny):
-            for ix in range(nx):
-                x = xs[ix]
-                y = ys[iy]
-                z = zs[iz]
-                rx = z * cos_a + x * sin_a
-                rz = -z * sin_a + x * cos_a
-                particles.append([rx + 0.22, y, rz])
-                is_static = anchored and (ix == 0 or ix == nx - 1 or iy == 0 or iy == ny - 1)
-                static_particles.append(is_static)
-
-    pos = np.array(particles, dtype=np.float32)
+    depth, vertical, across = (axis.ravel() for axis in np.meshgrid(zs, ys, xs, indexing='ij'))
+    pos = _orient_plate(depth, vertical, across, angle_deg)
     n = len(pos)
     vel = np.zeros((n, 3), dtype=np.float32)
     mass = np.full(n, mat['density'] * spacing**3, dtype=np.float32)
-    static = np.array(static_particles, dtype=bool)
+    static = np.zeros((nz, ny, nx), dtype=bool)
+    if anchored:
+        static[:, (0, -1), :] = True
+        static[:, :, (0, -1)] = True
 
     spring_dist = spacing * 1.8
     grid = {}
@@ -180,13 +205,31 @@ def create_plate_body(width, height, thickness, angle_deg, material, spacing=Non
     else:
         spring_indices = np.zeros((0, 2), dtype=np.int32)
         spring_rest = np.zeros(0, dtype=np.float32)
+    diag_mask = spring_rest > spacing * 1.1
+
+    if bend_deg:
+        bend_vertically = bend_axis == 'height'
+        span = height if bend_vertically else width
+        limit = _plate_bend_limit(span, thickness)
+        bend_deg = float(np.clip(bend_deg, -limit, limit))
+        if bend_deg and bend_vertically:
+            depth, vertical = _bend_plate_axis(depth, vertical, span, thickness, bend_deg)
+        elif bend_deg:
+            depth, across = _bend_plate_axis(depth, across, span, thickness, bend_deg)
+    if bend_deg:
+        # Keep lattice neighbors connected when the bend stretches the outer
+        # rows. Preserve their axial/diagonal classification while using the
+        # curved geometry to set their rest lengths.
+        pos = _orient_plate(depth, vertical, across, angle_deg)
+        spring_rest = np.linalg.norm(pos[spring_indices[:, 1]] - pos[spring_indices[:, 0]], axis=1)
+    if pitch_deg or roll_deg:
+        pos = _orient_plate(depth, vertical, across, angle_deg, pitch_deg, roll_deg)
 
     k_per_unit = mat['youngs_modulus'] * mat.get('stiffness_scale', 6e-4)
     spring_stiff = (k_per_unit * spring_rest).astype(np.float32)
     shear_boost = mat.get('shear_boost', 2.2)
-    diag_mask = spring_rest > spacing * 1.1
     spring_stiff[diag_mask] *= shear_boost
-    return pos, vel, mass, spring_indices, spring_rest, spring_stiff, static
+    return pos, vel, mass, spring_indices, spring_rest, spring_stiff, static.ravel()
 
 
 class Penetrator(SoftBody):
@@ -204,6 +247,7 @@ class Penetrator(SoftBody):
         self.particle_spacing = spacing
         pos, vel, mass, springs, rest, stiff = create_cylinder_body(
             self.length, self.diameter, self.material, spacing=spacing)
+        self.surface_faces = cylinder_faces(pos)
         self.pos = pos
         self.vel = vel
         self.rest_pos = pos.copy()
@@ -229,17 +273,32 @@ class ArmorPlate(SoftBody):
         self.height = 0.14
         self.thickness = 0.038
         self.angle = 60
+        self.pitch = 0
+        self.roll = 0
+        self.bend = 0
+        self.bend_axis = 'width'
         self.particle_size = 0.005
         self.anchored = True
         self.rebuild()
+
+    @property
+    def bend_limit(self):
+        span = self.height if self.bend_axis == 'height' else self.width
+        return _plate_bend_limit(span, self.thickness)
 
     def rebuild(self):
         saved_center = np.mean(self.rest_pos, axis=0) if self.rest_pos is not None else None
         spacing = float(np.clip(min(self.thickness / 2.5, self.width / 10.0, self.height / 10.0), 0.007, 0.012))
         self.particle_spacing = spacing
+        self.lattice_shape = _plate_lattice_shape(self.width, self.height, self.thickness, spacing)
+        if self.bend_axis not in ('width', 'height'):
+            self.bend_axis = 'width'
+        limit = self.bend_limit
+        self.bend = min(limit, max(-limit, self.bend))
         pos, vel, mass, springs, rest, stiff, static = create_plate_body(
             self.width, self.height, self.thickness, self.angle, self.material,
-            spacing=spacing, anchored=self.anchored)
+            spacing=spacing, anchored=self.anchored, pitch_deg=self.pitch, roll_deg=self.roll,
+            bend_deg=self.bend, bend_axis=self.bend_axis)
         self.pos = pos
         self.vel = vel
         self.rest_pos = pos.copy()

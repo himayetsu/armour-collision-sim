@@ -18,7 +18,7 @@ import pyqtgraph.opengl as gl
 
 from physics import PhysicsEngine
 from bodies import Penetrator, ArmorPlate
-from views import SimViewWidget, OrthoCanvas, VIEW_LABELS
+from views import BodySurface, SimViewWidget, OrthoCanvas, VIEW_LABELS
 from gizmo import TransformGizmo
 from materials import MATERIALS
 
@@ -142,6 +142,7 @@ class MainWindow(QMainWindow):
         self.simulation_started = False
         self.selected = None
         self.show_springs = True
+        self.solid_view = True
         self.quad_mode = False
         self.ortho_views = []
         self.show_penetrator = True
@@ -295,6 +296,12 @@ class MainWindow(QMainWindow):
         self.view_combo.setMinimumWidth(110)
         row2.addWidget(self.view_combo)
 
+        row2.addWidget(QLabel("3D Style"))
+        self.render_style_combo = QComboBox()
+        self.render_style_combo.addItems(["Solid", "Wireframe"])
+        self.render_style_combo.currentTextChanged.connect(self.set_render_style)
+        row2.addWidget(self.render_style_combo)
+
         row2.addSpacing(10)
         self.pen_vis_cb = QCheckBox("Projectile")
         self.pen_vis_cb.setChecked(True)
@@ -369,24 +376,35 @@ class MainWindow(QMainWindow):
 
             for mode, row, col in [('top', 0, 0), ('front', 0, 1), ('right', 1, 0)]:
                 ov = OrthoCanvas(mode=mode)
-                ov.show_springs = self.show_springs
-                ov.set_bodies(self.physics.bodies)
                 self.view_grid.addWidget(ov, row, col)
                 self.ortho_views.append(ov)
 
             self.quad_mode = True
+            self._sync_ortho_views()
 
     def _sync_ortho_views(self):
         for ov in self.ortho_views:
-            ov.set_bodies(self.physics.bodies)
             ov.show_springs = self.show_springs
+            ov.show_penetrator = self.show_penetrator
+            ov.show_armor = self.show_armor
+            ov.set_bodies(self.physics.bodies)
 
     def _do_armor_rebuild(self):
         if self._armor_rebuild_body is not None:
-            body = self._armor_rebuild_body
+            self._rebuild_body(self._armor_rebuild_body)
+
+    def _rebuild_body(self, body):
+        if self._armor_rebuild_body is body:
+            self._armor_rebuild_timer.stop()
             self._armor_rebuild_body = None
-            body.rebuild()
-            self.rebuild_visuals(body)
+        body.rebuild()
+        if hasattr(body, '_snap_rest_pos'):
+            self._save_body_reset_snapshot(body)
+        self.rebuild_visuals(body)
+        if self.selected is body:
+            self.gizmo.update_position()
+        if self.quad_mode:
+            self._sync_ortho_views()
 
     def create_scene(self):
         self.add_penetrator()
@@ -412,48 +430,59 @@ class MainWindow(QMainWindow):
 
     def create_visuals(self, body):
         mat = MATERIALS[body.material]
-        colors = np.zeros((body.n_particles, 4), dtype=np.float32)
-        colors[:, :3] = mat['color']
-        colors[:, 3] = 1.0
-
-        scatter = gl.GLScatterPlotItem(pos=body.pos, color=colors, size=6, pxMode=True)
-        scatter.setGLOptions('opaque')
-        body.scatter = scatter
-        self.view.addItem(scatter)
+        body.surface = BodySurface(body)
+        self.view.addItem(body.surface)
+        body.scatter = gl.GLScatterPlotItem(size=6, pxMode=True)
+        body.scatter.setGLOptions('opaque')
+        self.view.addItem(body.scatter)
 
         if body.springs is not None and len(body.springs) > 0:
-            lp = np.zeros((len(body.springs) * 2, 3), dtype=np.float32)
-            for k, (i, j) in enumerate(body.springs):
-                lp[k * 2] = body.pos[i]
-                lp[k * 2 + 1] = body.pos[j]
-            lines = gl.GLLinePlotItem(pos=lp, color=(*mat['color'] * 0.6, 0.3), width=1, mode='lines')
-            body.lines = lines
-            self.view.addItem(lines)
+            body.lines = gl.GLLinePlotItem(color=(*mat['color'] * 0.6, 0.3),
+                                          width=1, mode='lines')
+            self.view.addItem(body.lines)
+        self.update_visuals(body)
+        self._sync_ortho_views()
+
+    def remove_visuals(self, body):
+        for item in (body.surface, body.scatter, body.lines):
+            if item is not None:
+                self.view.removeItem(item)
+        body.surface = body.scatter = body.lines = None
+
+    def set_render_style(self, style):
+        self.solid_view = style == "Solid"
+        for body in self.physics.bodies:
+            self.update_visuals(body)
 
     def toggle_penetrator_vis(self, show):
         self.show_penetrator = show
         for body in self.physics.bodies:
             if body.body_type == 'penetrator':
                 self.update_visuals(body)
+        self._sync_ortho_views()
 
     def toggle_armor_vis(self, show):
         self.show_armor = show
         for body in self.physics.bodies:
             if body.body_type == 'armor':
                 self.update_visuals(body)
+        self._sync_ortho_views()
 
     def update_visuals(self, body):
         if body.scatter is None:
             return
 
-        # Visibility toggle
         visible = (self.show_penetrator if body.body_type == 'penetrator'
                    else self.show_armor)
-        body.scatter.setVisible(visible)
+        show_lines = (visible and not self.solid_view and self.show_springs
+                      and body.springs is not None and len(body.springs) > 0)
         if body.lines is not None:
-            body.lines.setVisible(visible and self.show_springs
-                                  and body.springs is not None
-                                  and len(body.springs) > 0)
+            body.lines.setVisible(show_lines)
+        if not visible or not self.solid_view:
+            body.surface.hide()
+        if not visible:
+            body.scatter.hide()
+            return
 
         colors = np.zeros((body.n_particles, 4), dtype=np.float32)
         if body.body_type == 'penetrator':
@@ -472,33 +501,30 @@ class MainWindow(QMainWindow):
         colors[:, 3] = 1.0
         if body.selected:
             colors[:, :3] = np.clip(colors[:, :3] + 0.1, 0, 1)
-        body.scatter.setData(pos=body.pos, color=colors)
+        if self.solid_view:
+            particles = body.surface.update_body(body, colors)
+            body.scatter.setVisible(bool(len(particles)))
+            if len(particles):
+                body.scatter.setData(pos=body.pos[particles], color=colors[particles])
+        else:
+            body.scatter.show()
+            body.scatter.setData(pos=body.pos, color=colors)
 
-        if body.lines is not None and visible and self.show_springs:
-            if body.springs is not None and len(body.springs) > 0:
-                lp = np.empty((len(body.springs) * 2, 3), dtype=np.float32)
-                lp[0::2] = body.pos[body.springs[:, 0]]
-                lp[1::2] = body.pos[body.springs[:, 1]]
-                body.lines.setData(pos=lp)
+        if show_lines and body.lines is not None:
+            line_positions = body.pos[body.springs.ravel()]
+            body.lines.setData(pos=line_positions)
 
     def rebuild_visuals(self, body):
-        if body.scatter:
-            self.view.removeItem(body.scatter)
-        if body.lines:
-            self.view.removeItem(body.lines)
-        body.scatter = None
-        body.lines = None
+        self.remove_visuals(body)
         self.create_visuals(body)
         self.update_tree()
 
     def toggle_springs(self, show):
         self.show_springs = show
-        for body in self.physics.bodies:
-            if body.lines:
-                body.lines.setVisible(show)
-        for ov in self.ortho_views:
-            ov.show_springs = show
-            ov.update()
+        if not self.solid_view:
+            for body in self.physics.bodies:
+                self.update_visuals(body)
+        self._sync_ortho_views()
 
     def update_tree(self):
         self.tree.clear()
@@ -563,20 +589,56 @@ class MainWindow(QMainWindow):
             self._spin("Velocity (m/s)", 1, 10000, round(body.initial_velocity),
                        lambda v: setattr(body, 'initial_velocity', float(v)), dl, 50)
         else:
-            self._spin("Width (mm)", 1, 10000, round(body.width * 1000),
-                       lambda v: self.change_dim(body, 'width', v / 1000), dl)
-            self._spin("Height (mm)", 1, 10000, round(body.height * 1000),
-                       lambda v: self.change_dim(body, 'height', v / 1000), dl)
-            self._spin("Thickness (mm)", 1, 10000, round(body.thickness * 1000),
-                       lambda v: self.change_dim(body, 'thickness', v / 1000), dl)
-            self._spin("Angle (°)", -90, 90, body.angle,
-                       lambda v: self.change_dim(body, 'angle', v), dl)
+            dimensions = []
+            for label, attr in (("Width (mm)", 'width'), ("Height (mm)", 'height'),
+                                ("Thickness (mm)", 'thickness')):
+                dimensions.append(self._spin(label, 1, 10000, round(getattr(body, attr) * 1000),
+                                             lambda v, attr=attr: self.change_dim(body, attr, v / 1000), dl))
             anchored_cb = QCheckBox("Anchored")
             anchored_cb.setChecked(getattr(body, 'anchored', True))
             anchored_cb.setToolTip("When on, edge particles stay fixed. When off, the whole plate is free.")
             anchored_cb.toggled.connect(lambda on: self.change_anchored(body, on))
             dl.addWidget(anchored_cb)
         self.props_box.addWidget(dim)
+        if body.body_type == 'armor':
+            self._show_plate_shape_controls(body, dimensions)
+
+    def _show_plate_shape_controls(self, body, dimensions):
+        orientation = QGroupBox("Orientation")
+        ol = QVBoxLayout(orientation)
+        for label, attr, tooltip in (
+            ("Yaw (Y, °)", 'angle', "Turn around the scene's vertical axis."),
+            ("Pitch (Z, °)", 'pitch', "Tilt around the plate's width axis before yaw."),
+            ("Roll (X, °)", 'roll', "Spin around the plate's normal before pitch and yaw."),
+        ):
+            field = self._spin(label, -180, 180, round(getattr(body, attr)),
+                               lambda v, attr=attr: self.change_dim(body, attr, v), ol)
+            field.setToolTip(tooltip)
+        self.props_box.addWidget(orientation)
+
+        curvature = QGroupBox("Curvature")
+        cl = QVBoxLayout(curvature)
+        axis_row = QHBoxLayout()
+        axis_row.addWidget(QLabel("Bend across"))
+        axis = QComboBox()
+        axis.addItems(("Width", "Height"))
+        axis.setCurrentText(body.bend_axis.capitalize())
+        axis_row.addWidget(axis)
+        cl.addLayout(axis_row)
+        bend = self._spin("Bend angle (°)", -body.bend_limit, body.bend_limit, round(body.bend),
+                          lambda v: self.change_dim(body, 'bend', v), cl)
+        bend.setToolTip("Total angle of the arc across the selected span. Zero is flat. "
+                        "Positive values bend the edges toward the plate's local +X direction.")
+
+        def update_bend_range():
+            limit = body.bend_limit
+            bend.setRange(-limit, limit)
+
+        axis.currentTextChanged.connect(lambda text: self.change_dim(body, 'bend_axis', text.lower()))
+        axis.currentTextChanged.connect(update_bend_range)
+        for field in dimensions:
+            field.valueChanged.connect(update_bend_range)
+        self.props_box.addWidget(curvature)
 
     def _spin(self, label, mn, mx, val, cb, layout, step=1):
         h = QHBoxLayout()
@@ -590,6 +652,7 @@ class MainWindow(QMainWindow):
         s.valueChanged.connect(cb)
         h.addWidget(s)
         layout.addLayout(h)
+        return s
 
     def clear_props(self):
         while self.props_box.count():
@@ -599,28 +662,27 @@ class MainWindow(QMainWindow):
 
     def change_mat(self, body, name):
         body.material = NAME_TO_MATERIAL.get(name, 'steel')
-        body.rebuild()
-        self.rebuild_visuals(body)
+        self._rebuild_body(body)
 
     def change_dim(self, body, attr, val):
         setattr(body, attr, val)
         if body.body_type == 'armor':
+            if self._armor_rebuild_body is not body:
+                self._do_armor_rebuild()
             self._armor_rebuild_body = body
-            self._armor_rebuild_timer.stop()
             self._armor_rebuild_timer.start(350)
         else:
-            body.rebuild()
-            self.rebuild_visuals(body)
+            self._rebuild_body(body)
 
     def change_anchored(self, body, anchored):
         body.anchored = bool(anchored)
-        body.rebuild()
-        self.rebuild_visuals(body)
+        self._rebuild_body(body)
 
     def duplicate_selected(self):
         src = self.selected
         if src is None:
             return
+        self._do_armor_rebuild()
         if src.body_type == 'penetrator':
             n = len([b for b in self.physics.bodies if b.body_type == 'penetrator'])
             dup = Penetrator(f"Penetrator.{n + 1:03d}")
@@ -637,6 +699,10 @@ class MainWindow(QMainWindow):
             dup.height = src.height
             dup.thickness = src.thickness
             dup.angle = src.angle
+            dup.pitch = src.pitch
+            dup.roll = src.roll
+            dup.bend = src.bend
+            dup.bend_axis = src.bend_axis
             dup.particle_size = src.particle_size
             dup.anchored = getattr(src, 'anchored', True)
         dup.rebuild()
@@ -652,6 +718,7 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Export Layout", "./savedata", "Layout Files (*.json)")
         if not path:
             return
+        self._do_armor_rebuild()
         bodies_data = []
         for body in self.physics.bodies:
             entry = {
@@ -672,6 +739,10 @@ class MainWindow(QMainWindow):
                     'height': body.height,
                     'thickness': body.thickness,
                     'angle': body.angle,
+                    'pitch': body.pitch,
+                    'roll': body.roll,
+                    'bend': body.bend,
+                    'bend_axis': body.bend_axis,
                     'anchored': getattr(body, 'anchored', True),
                 })
             entry['center'] = np.mean(body.pos, axis=0).tolist()
@@ -700,10 +771,7 @@ class MainWindow(QMainWindow):
         self.selected = None
         self.gizmo.detach()
         for body in self.physics.bodies:
-            if body.scatter:
-                self.view.removeItem(body.scatter)
-            if body.lines:
-                self.view.removeItem(body.lines)
+            self.remove_visuals(body)
         self.physics.bodies.clear()
         self.physics.time = 0.0
         self.physics.impact_occurred = False
@@ -727,6 +795,10 @@ class MainWindow(QMainWindow):
                 body.height = entry['height']
                 body.thickness = entry['thickness']
                 body.angle = entry['angle']
+                body.pitch = entry.get('pitch', 0)
+                body.roll = entry.get('roll', 0)
+                body.bend = entry.get('bend', 0)
+                body.bend_axis = entry.get('bend_axis', 'width')
                 body.particle_size = entry.get('particle_size', body.particle_size)
                 body.anchored = entry.get('anchored', True)
             body.rebuild()
@@ -739,6 +811,7 @@ class MainWindow(QMainWindow):
             self.create_visuals(body)
 
         self.update_tree()
+        self._sync_ortho_views()
         self.time_lbl.setText("Time: 0.0 μs")
         self.pen_lbl.setText("Pen: 0 mm")
         if self.physics.bodies:
@@ -746,36 +819,42 @@ class MainWindow(QMainWindow):
 
     def delete_selected(self):
         if self.selected:
-            if self.selected.scatter:
-                self.view.removeItem(self.selected.scatter)
-            if self.selected.lines:
-                self.view.removeItem(self.selected.lines)
+            if self._armor_rebuild_body is self.selected:
+                self._armor_rebuild_timer.stop()
+                self._armor_rebuild_body = None
+            self.remove_visuals(self.selected)
             self.physics.bodies.remove(self.selected)
             self.selected = None
             self.gizmo.detach()
             self.update_tree()
+            self._sync_ortho_views()
             self.clear_props()
 
     def _save_reset_snapshot(self):
         """Save a full snapshot of all body arrays so reset_sim can restore them exactly."""
         self.physics.reset()  # put bodies in clean initial state first
         for b in self.physics.bodies:
-            b._snap_rest_pos   = b.rest_pos.copy()
-            b._snap_pos        = b.pos.copy()
-            b._snap_vel        = b.vel.copy()
-            b._snap_mass       = b.mass.copy()
-            b._snap_active     = b.active.copy() if b.active is not None else None
-            b._snap_radius     = b.radius.copy() if b.radius is not None else None
-            b._snap_springs    = b.springs.copy() if b.springs is not None else None
-            b._snap_spring_rest  = b.spring_rest.copy() if b.spring_rest is not None else None
-            b._snap_spring_stiff = b.spring_stiff.copy() if b.spring_stiff is not None else None
+            self._save_body_reset_snapshot(b)
+
+    @staticmethod
+    def _save_body_reset_snapshot(body):
+        body._snap_rest_pos = body.rest_pos.copy()
+        body._snap_pos = body.pos.copy()
+        body._snap_vel = body.vel.copy()
+        body._snap_mass = body.mass.copy()
+        body._snap_active = body.active.copy() if body.active is not None else None
+        body._snap_radius = body.radius.copy() if body.radius is not None else None
+        body._snap_springs = body.springs.copy() if body.springs is not None else None
+        body._snap_spring_rest = body.spring_rest.copy() if body.spring_rest is not None else None
+        body._snap_spring_rest_original = (body.spring_rest_original.copy()
+                                           if body.spring_rest_original is not None else None)
+        body._snap_spring_stiff = body.spring_stiff.copy() if body.spring_stiff is not None else None
 
     def toggle_play(self):
         self.running = self.play_btn.isChecked()
         if self.running:
             self.play_btn.setText("⏸ Pause")
-            self._armor_rebuild_timer.stop()
-            self._armor_rebuild_body = None
+            self._do_armor_rebuild()
             if not self.simulation_started:
                 self._save_reset_snapshot()
                 for b in self.physics.bodies:
@@ -794,8 +873,7 @@ class MainWindow(QMainWindow):
         self.play_btn.setChecked(False)
         self.play_btn.setText("▶ Play")
         self.timer.stop()
-        self._armor_rebuild_timer.stop()
-        self._armor_rebuild_body = None
+        self._do_armor_rebuild()
         for b in self.physics.bodies:
             if not hasattr(b, '_snap_rest_pos'):
                 continue
@@ -810,6 +888,7 @@ class MainWindow(QMainWindow):
             if b._snap_springs is not None:
                 b.springs      = b._snap_springs.copy()
                 b.spring_rest  = b._snap_spring_rest.copy()
+                b.spring_rest_original = b._snap_spring_rest_original.copy()
                 b.spring_stiff = b._snap_spring_stiff.copy()
         # reset physics-engine counters and angular velocity only
         self.physics.time = 0.0
