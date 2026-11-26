@@ -1,10 +1,12 @@
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from PyQt5.QtCore import QEvent, Qt
 from PyQt5.QtWidgets import QApplication, QLabel
 
 from mainwindow import MainWindow
+from surface_cuts import build_cut_faces
 
 
 class SceneDisplayTests(unittest.TestCase):
@@ -131,6 +133,32 @@ class SceneDisplayTests(unittest.TestCase):
         np.testing.assert_array_equal(self.armor.scatter.pos, self.armor.pos[displayed],
                                       err_msg='Surface Nodes must add only the detached interior position')
         self.assertEqual(self.scene_row(self.armor).text(1), f'{len(displayed):,} nodes')
+
+    def test_switching_from_surface_nodes_to_solid_builds_cut_geometry_on_demand(self):
+        self.window.render_style_combo.setCurrentText('Surface Nodes')
+        width = self.armor.lattice_shape[-1]
+        sides = np.arange(self.armor.n_particles) % width < width // 2
+        springs = self.armor.springs
+        self.armor.springs = springs[sides[springs[:, 0]] == sides[springs[:, 1]]]
+        surface = self.armor.surface
+
+        with patch('surface_mesh.build_cut_faces', wraps=build_cut_faces) as build:
+            self.window.update_visuals(self.armor)
+            build.assert_not_called()
+            self.assertEqual(surface.displayed_triangles, 0, 'Surface Nodes must draw only nodes')
+
+            self.window.render_style_combo.setCurrentText('Solid')
+            build.assert_called_once()
+            caps, _ = surface.topology.cut_surfaces()
+            self.assertGreater(len(caps), 0, 'Solid must close the previously separated fragments')
+            mesh = surface.opts['meshdata']
+            np.testing.assert_array_equal(mesh.vertexes()[mesh.faces()[-len(caps):]], self.armor.pos[caps],
+                                          err_msg='The new Solid mesh must contain the cut triangles')
+
+            self.window.render_style_combo.setCurrentText('Surface Nodes')
+            self.window.render_style_combo.setCurrentText('Solid')
+            build.assert_called_once()
+            self.assertIs(surface.opts['meshdata'], mesh, 'An unchanged cut must reuse the render mesh')
 
     def test_dimension_rebuild_refreshes_selected_solver_info_in_place(self):
         self.window.select_body(self.armor)

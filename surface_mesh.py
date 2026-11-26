@@ -4,6 +4,8 @@ import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 
+from surface_cuts import build_cut_faces
+
 
 def plate_faces(shape):
     """Triangulate the six boundary planes of a thickness/height/width lattice."""
@@ -124,6 +126,7 @@ class BodySurfaceTopology:
         else:
             rest_faces = body.surface_faces
             self._quad_pairs = getattr(body, 'surface_quad_pairs', np.empty((0, 2), dtype=np.int32))
+        self._shell_face_count = len(rest_faces)
         self._rest_quads = _quad_corners(rest_faces, self._quad_pairs)
         alternative = np.stack((self._rest_quads[:, [0, 1, 3]],
                                 self._rest_quads[:, [1, 2, 3]]), axis=1)
@@ -139,6 +142,7 @@ class BodySurfaceTopology:
         rest_positions = getattr(body, 'surface_rest_pos', None)
         if rest_positions is None:
             rest_positions = getattr(body, 'rest_pos', None)
+        self._rest_positions = rest_positions
         self._stretch_limit_sq = None
         if rest_positions is not None:
             self._edge_starts, self._edge_ends = np.divmod(self._edge_keys, max(1, self.particle_count))
@@ -148,6 +152,10 @@ class BodySurfaceTopology:
         self._quad_mask = None
         self._triangle_mask = None
         self.particles = np.empty(0, dtype=np.intp)
+        self._cut_faces = np.empty((0, 3), dtype=np.intp)
+        self._cut_groups = np.empty(0, dtype=np.intp)
+        self._cut_shell = None
+        self._cut_components = None
         self._last_springs = object()
         self.update(body.springs)
 
@@ -157,6 +165,7 @@ class BodySurfaceTopology:
         return _edge_keys(springs[:, 0], springs[:, 1], self.particle_count)
 
     def _update_bond_support(self, springs):
+        self._components = None
         present = np.isin(self._edge_keys, self._spring_keys(springs))[self._face_edges]
         self._bonded = np.zeros(self.particle_count, dtype=bool)
         if springs is not None:
@@ -166,10 +175,7 @@ class BodySurfaceTopology:
         keep = present.sum(axis=1) >= 2
         weak = np.flatnonzero(~keep & self._bonded[self._candidates].all(axis=1))
         if len(weak):
-            i, j = springs.T
-            graph = csr_matrix((np.ones(len(i), dtype=bool), (i, j)),
-                               shape=(self.particle_count, self.particle_count))
-            _, components = connected_components(graph, directed=False)
+            _, components = self._fragment_labels(springs)
             labels = components[self._candidates[weak]]
             weak = weak[(labels == labels[:, :1]).all(axis=1)]
             keep[weak] = True
@@ -180,6 +186,36 @@ class BodySurfaceTopology:
             self._stretch_faces = weak[rows]
             measured_edges = self._face_edges[self._stretch_faces, columns]
             self._stretch_edges, self._stretch_edge_slots = np.unique(measured_edges, return_inverse=True)
+
+    def _fragment_labels(self, springs):
+        if self._components is None:
+            i, j = springs.T
+            graph = csr_matrix((np.ones(len(i), dtype=bool), (i, j)),
+                               shape=(self.particle_count, self.particle_count))
+            self._components = connected_components(graph, directed=False)
+        return self._components
+
+    def cut_surfaces(self):
+        """Build display caps on demand after the exterior has been updated."""
+        if self._rest_positions is not None and 0 < len(self.faces) < self._shell_face_count:
+            count, labels = self._fragment_labels(self._last_springs)
+            if count > 1:
+                # A bond loss inside a fragment can leave both the visible
+                # boundary and its component membership unchanged.
+                if self._cut_shell is not self.faces or (
+                        self._cut_components is not labels and not np.array_equal(self._cut_components, labels)):
+                    cut_faces, cut_groups = build_cut_faces(
+                        self.faces, self._candidates, self._rest_positions, labels)
+                    if not np.array_equal(self._cut_faces, cut_faces):
+                        self._cut_faces = cut_faces
+                        self._cut_groups = cut_groups
+                self._cut_shell, self._cut_components = self.faces, labels
+                return self._cut_faces, self._cut_groups
+        self._cut_shell = self._cut_components = None
+        if len(self._cut_faces):
+            self._cut_faces = np.empty((0, 3), dtype=np.intp)
+            self._cut_groups = np.empty(0, dtype=np.intp)
+        return self._cut_faces, self._cut_groups
 
     def _select_faces(self, keep):
         primary_counts = keep[self._quad_pairs].sum(axis=1)

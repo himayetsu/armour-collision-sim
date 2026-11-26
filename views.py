@@ -12,6 +12,7 @@ from OpenGL import GL
 from gizmo import TransformGizmo
 from materials import MATERIALS
 from surface_display import SurfacePatchMesh
+from surface_lighting import SurfaceShading, surface_groups
 from surface_mesh import BodySurfaceTopology
 
 
@@ -53,7 +54,10 @@ def _surface_lighting_shader():
         {'' if legacy else 'varying vec4 v_color;'}
         void main() {{
             vec3 light = normalize(vec3(-0.45, 0.65, 1.0));
-            vec3 facing_normal = normalize({normal});
+            // Opposing corner normals can interpolate to zero at a fold.
+            vec3 surface_normal = {normal};
+            float normal_sq = dot(surface_normal, surface_normal);
+            vec3 facing_normal = surface_normal * inversesqrt(max(normal_sq, 0.0001));
             facing_normal = gl_FrontFacing ? facing_normal : -facing_normal;
             float brightness = 0.90 + 0.17 * dot(facing_normal, light);
             gl_FragColor = vec4({color}.rgb * brightness, {color}.a);
@@ -67,6 +71,21 @@ _SURFACE_SUBDIVISIONS = 4
 _MAX_REFINED_TRIANGLES = 100_000
 
 
+class _ShadedMeshData(gl.MeshData):
+    def __init__(self, shading, positions, colors):
+        positions = np.ascontiguousarray(positions[shading.vertex_indices], dtype=np.float32)
+        super().__init__(vertexes=positions, faces=shading.faces,
+                         vertexColors=colors[shading.vertex_indices])
+        self._surface_normals = shading.normals(positions)
+
+    def vertexNormals(self, indexed=None):
+        if indexed is None:
+            return self._surface_normals
+        if indexed == 'faces':
+            return self._surface_normals[self.faces()]
+        raise ValueError("Normals support vertex or face indexing")
+
+
 class BodySurface(gl.GLMeshItem):
     def __init__(self, body):
         topology = BodySurfaceTopology(body)
@@ -74,25 +93,54 @@ class BodySurface(gl.GLMeshItem):
         if len(topology.quads):
             triangle_budget = max(0, _MAX_REFINED_TRIANGLES - len(topology.triangles))
             subdivisions = min(subdivisions, int(np.sqrt(triangle_budget / (2 * len(topology.quads)))))
-        super().__init__(smooth=False, shader=_SURFACE_SHADER.name, glOptions='opaque')
+        super().__init__(smooth=True, shader=_SURFACE_SHADER.name, glOptions='opaque')
         self.updateGLOptions({GL.GL_CULL_FACE: False})
         self.topology = topology
+        self._lattice_shape = getattr(body, 'lattice_shape', None)
+        self._axial_positions = None
+        if body.body_type == 'penetrator':
+            rest = getattr(body, 'surface_rest_pos', None)
+            if rest is None:
+                rest = getattr(body, 'rest_pos', None)
+            if rest is not None:
+                self._axial_positions = rest[:, 0]
         self._subdivisions = subdivisions
         self._refined = None
-        self._refined_quads = None
-        self._refined_triangles = None
+        self._mesh_sources = ()
+        self._shading = None
         self._positions = None
         self._colors = None
         self._faces = None
 
-    def _refined_mesh(self):
-        if self._subdivisions < 2:
-            return None
-        quads, triangles = self.topology.quads, self.topology.triangles
-        if self._refined_quads is not quads or self._refined_triangles is not triangles:
-            self._refined = SurfacePatchMesh(quads, triangles, self._subdivisions)
-            self._refined_quads, self._refined_triangles = quads, triangles
-        return self._refined
+    def _surface_groups(self, faces):
+        return surface_groups(faces, lattice_shape=self._lattice_shape, axial_positions=self._axial_positions)
+
+    def _display_shading(self):
+        top = self.topology
+        cuts, cut_groups = top.cut_surfaces()
+        refine = self._subdivisions >= 2
+        sources = (top.quads, top.triangles, cuts) if refine else (top.faces, cuts)
+        if self._shading is not None and all(a is b for a, b in zip(sources, self._mesh_sources)):
+            return self._shading
+        self._mesh_sources = sources
+
+        cut_groups = cut_groups + 6
+        if refine:
+            triangles = np.concatenate((top.triangles, cuts)) if len(cuts) else top.triangles
+            self._refined = SurfacePatchMesh(top.quads, triangles, self._subdivisions)
+            faces = self._refined.faces
+            groups = self._surface_groups(top.triangles)
+            if len(top.quads):
+                faces_per_quad = (len(faces) - len(triangles)) // len(top.quads)
+                quad_groups = np.repeat(self._surface_groups(top.quads[:, :3]), faces_per_quad)
+                groups = np.concatenate((quad_groups, groups))
+        else:
+            faces = top.mesh_faces
+            groups = self._surface_groups(top.faces)
+            if len(cuts):
+                faces = np.concatenate((faces, np.searchsorted(top.vertices, cuts)))
+        self._shading = SurfaceShading(faces, np.concatenate((groups, cut_groups)))
+        return self._shading
 
     @property
     def displayed_triangles(self):
@@ -101,20 +149,19 @@ class BodySurface(gl.GLMeshItem):
     def update_body(self, body, colors):
         """Upload the visible shell and return particle indices for loose geometry."""
         self.topology.update(body.springs, body.pos)
-        refined = self._refined_mesh()
-        faces = refined.faces if refined is not None else self.topology.mesh_faces
+        shading = self._display_shading()
+        faces = shading.faces
         self.setVisible(bool(len(faces)))
         if len(faces):
             positions = body.pos[self.topology.vertices]
             surface_colors = colors[self.topology.vertices]
             if (self._faces is not faces or not np.array_equal(positions, self._positions)
                     or not np.array_equal(surface_colors, self._colors)):
-                if refined is None:
-                    self.setMeshData(vertexes=positions, faces=faces, vertexColors=surface_colors)
-                else:
-                    values = refined.sample(np.column_stack((body.pos, colors)))
-                    self.setMeshData(vertexes=np.ascontiguousarray(values[:, :3]), faces=faces,
-                                     vertexColors=np.ascontiguousarray(values[:, 3:]))
+                mesh_positions, mesh_colors = positions, surface_colors
+                if self._refined is not None:
+                    values = self._refined.sample(np.column_stack((body.pos, colors)))
+                    mesh_positions, mesh_colors = values[:, :3], values[:, 3:]
+                self.setMeshData(meshdata=_ShadedMeshData(shading, mesh_positions, mesh_colors))
                 self._positions = positions
                 self._colors = surface_colors
                 self._faces = faces

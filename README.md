@@ -15,11 +15,14 @@ and set the total bend angle. The selected dimension is the arc length along the
 middle of the plate. Use a bend angle of zero for a flat plate.
 
 Use **3D Style** to switch between Solid exterior faces, Wireframe nodes and
-bonds, and Surface Nodes. Surface Nodes draws the simulation nodes on the
-exterior plus any loose nodes. The three 2D panels in Quad View display nodes
-for editing. The Scene panel's **3D display** column counts the active 3D
-geometry. Hover over a row to see the simulation node and bond counts alongside
-the display counts.
+bonds, and Surface Nodes. Solid shades the deforming exterior smoothly while
+keeping plate edges and round rear caps sharp. Solid can close a clean planar
+split when it finds matching rims on separate fragments. The new faces use the
+existing rim nodes. Complex openings stay visible. Surface Nodes draws the
+simulation nodes on the exterior plus any loose nodes. The three 2D panels in
+Quad View display nodes for editing. The Scene panel's **3D display** column
+counts the active 3D geometry. Hover over a row to see the simulation node and
+bond counts alongside the display counts.
 **Preview Burst** plays a visual effect at the selected body or camera target.
 Dimensions are measured at particle centers.
 
