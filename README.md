@@ -23,12 +23,14 @@ Dimensions are measured at particle centers.
 Use **Detail** in the Simulation panel to change node density for inert bodies.
 Medium uses the original sampling and Low is coarser. Ultra uses a nominal
 10 mm simulation spacing or Medium's spacing where it is finer. High is halfway
-between the Medium and Ultra simulation spacings. Ultra targets 2 mm visual
-spacing in **Surface Points**, with wider gaps on large surfaces to limit the
-drawing load. Samples fit the shape's exact dimensions, so actual gaps can vary.
-Changing detail pauses and resets the simulation. Finer simulation meshes can
-run more slowly and affect results by changing particle counts and bonds.
-Exported layouts store the setting, and older layouts open at Medium.
+between the Medium and Ultra simulation spacings. **Surface Points** targets
+16, 8, 4, and 2 mm visual spacing from Low to Ultra. In **Solid**, Low outlines
+its coarse facets, Medium uses the base surface, and High and Ultra interpolate
+increasingly fine patches between deformed nodes. Large surfaces use a drawing
+budget, so the spacing and refinement can vary. Changing detail pauses and
+resets the simulation. Finer simulation meshes can run more slowly and affect
+results by changing particle counts and bonds. Exported layouts store the
+setting, and older layouts open at Medium.
 
 **Geometry regression checks:** `python -m unittest discover -s tests -v`
 

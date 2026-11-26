@@ -267,7 +267,8 @@ class MainWindow(QMainWindow):
         self.detail_combo = QComboBox()
         self.detail_combo.addItems(DETAIL_LEVELS)
         self.detail_combo.setCurrentText(DEFAULT_DETAIL)
-        self.detail_combo.setToolTip("Ultra adds 2 mm visual sampling in the Surface Points view. "
+        self.detail_combo.setToolTip("Surface Points uses 16, 8, 4, or 2 mm visual spacing. "
+                                      "High and Ultra refine filled surfaces. "
                                       "Changing detail pauses and resets the simulation.")
         self.detail_combo.currentTextChanged.connect(self.change_detail)
         row1.addWidget(self.detail_combo)
@@ -527,10 +528,9 @@ class MainWindow(QMainWindow):
                 body.scatter.setData(pos=body.pos[particles], color=colors[particles], size=6)
         elif self.render_style == "Surface Points":
             points, point_colors = body.surface.surface_points(body, colors)
-            size = 2 if body.detail == 'Ultra' else 6
             body.scatter.setVisible(bool(len(points)))
             if points is not body.scatter.pos or point_colors is not body.scatter.color:
-                body.scatter.setData(pos=points, color=point_colors, size=size)
+                body.scatter.setData(pos=points, color=point_colors, size=body.surface.point_size)
         else:
             body.scatter.show()
             body.scatter.setData(pos=body.pos, color=colors, size=6)

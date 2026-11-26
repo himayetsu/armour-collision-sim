@@ -5,7 +5,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from materials import MATERIALS
-from surface_mesh import cylinder_faces
+from surface_mesh import cylinder_surface
 
 
 DETAIL_LEVELS = ('Low', 'Medium', 'High', 'Ultra')
@@ -267,7 +267,7 @@ class Penetrator(SoftBody):
         self.particle_spacing = spacing
         pos, vel, mass, springs, rest, stiff = create_cylinder_body(
             self.length, self.diameter, self.material, spacing=spacing)
-        self.surface_faces = cylinder_faces(pos)
+        self.surface_faces, self.surface_quad_pairs = cylinder_surface(pos)
         self.pos = pos
         self.vel = vel
         self.rest_pos = pos.copy()

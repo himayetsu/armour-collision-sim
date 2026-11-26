@@ -11,6 +11,7 @@ from OpenGL import GL
 
 from gizmo import TransformGizmo
 from materials import MATERIALS
+from surface_display import SurfacePatchMesh
 from surface_mesh import BodySurfaceTopology, SurfacePointSampler
 
 
@@ -62,13 +63,29 @@ def _surface_lighting_shader():
 
 
 _SURFACE_SHADER = _surface_lighting_shader()
+_SURFACE_POINT_SPACING = {'Low': 0.016, 'Medium': 0.008, 'High': 0.004, 'Ultra': 0.002}
+_SURFACE_POINT_SIZE = {'Low': 5, 'Medium': 4, 'High': 3, 'Ultra': 2}
+_SURFACE_SUBDIVISIONS = {'High': 4, 'Ultra': 6}
+_MAX_REFINED_TRIANGLES = 100_000
 
 
 class BodySurface(gl.GLMeshItem):
     def __init__(self, body):
-        super().__init__(smooth=False, shader=_SURFACE_SHADER.name, glOptions='opaque')
+        topology = BodySurfaceTopology(body)
+        subdivisions = _SURFACE_SUBDIVISIONS.get(body.detail, 1)
+        if len(topology.quads):
+            triangle_budget = max(0, _MAX_REFINED_TRIANGLES - len(topology.triangles))
+            subdivisions = min(subdivisions, int(np.sqrt(triangle_budget / (2 * len(topology.quads)))))
+        super().__init__(smooth=False, shader=_SURFACE_SHADER.name, glOptions='opaque',
+                         drawEdges=body.detail == 'Low', edgeColor=(0.16, 0.20, 0.25, 1.0))
         self.updateGLOptions({GL.GL_CULL_FACE: False})
-        self.topology = BodySurfaceTopology(body)
+        self.topology = topology
+        self.point_size = _SURFACE_POINT_SIZE[body.detail]
+        self._point_spacing = _SURFACE_POINT_SPACING[body.detail]
+        self._subdivisions = subdivisions
+        self._refined = None
+        self._refined_quads = None
+        self._refined_triangles = None
         self._positions = None
         self._colors = None
         self._faces = None
@@ -77,40 +94,68 @@ class BodySurface(gl.GLMeshItem):
         self._sample_loose = None
         self._sample_buffers = None
 
+    def paint(self):
+        if not self.opts['drawEdges']:
+            super().paint()
+            return
+        # Bias the fill away from the outlines so they stay visible at a grazing angle.
+        GL.glEnable(GL.GL_POLYGON_OFFSET_FILL)
+        GL.glPolygonOffset(1.0, 1.0)
+        try:
+            super().paint()
+        finally:
+            GL.glDisable(GL.GL_POLYGON_OFFSET_FILL)
+
+    def _refined_mesh(self):
+        if self._subdivisions < 2:
+            return None
+        quads, triangles = self.topology.quads, self.topology.triangles
+        if self._refined_quads is not quads or self._refined_triangles is not triangles:
+            self._refined = SurfacePatchMesh(quads, triangles, self._subdivisions)
+            self._refined_quads, self._refined_triangles = quads, triangles
+        return self._refined
+
     def update_body(self, body, colors):
         """Upload the visible shell and return particle indices for loose geometry."""
-        self.topology.update(body.springs)
-        faces = self.topology.mesh_faces
+        self.topology.update(body.springs, body.pos)
+        refined = self._refined_mesh()
+        faces = refined.faces if refined is not None else self.topology.mesh_faces
         self.setVisible(bool(len(faces)))
         if len(faces):
             positions = body.pos[self.topology.vertices]
-            colors = colors[self.topology.vertices]
+            surface_colors = colors[self.topology.vertices]
             if (self._faces is not faces or not np.array_equal(positions, self._positions)
-                    or not np.array_equal(colors, self._colors)):
-                self.setMeshData(vertexes=positions, faces=faces, vertexColors=colors)
+                    or not np.array_equal(surface_colors, self._colors)):
+                if refined is None:
+                    self.setMeshData(vertexes=positions, faces=faces, vertexColors=surface_colors)
+                else:
+                    values = refined.sample(np.column_stack((body.pos, colors)))
+                    self.setMeshData(vertexes=np.ascontiguousarray(values[:, :3]), faces=faces,
+                                     vertexColors=np.ascontiguousarray(values[:, 3:]))
                 self._positions = positions
-                self._colors = colors
+                self._colors = surface_colors
                 self._faces = faces
         return self.topology.particles
 
     def surface_points(self, body, colors):
-        self.topology.update(body.springs)
-        faces = self.topology.faces
+        self.topology.update(body.springs, body.pos)
+        refined = self._refined_mesh()
+        faces = refined.faces if refined is not None else self.topology.faces
         loose = self.topology.particles
-        if body.detail != 'Ultra' or not len(faces):
-            vertices = np.union1d(self.topology.vertices, loose)
-            return body.pos[vertices], colors[vertices]
+        if not len(faces):
+            return body.pos[loose], colors[loose]
 
         if self._sample_faces is not faces:
-            if not np.array_equal(self._sample_faces, faces):
-                self._point_sampler = SurfacePointSampler(body.rest_pos, faces)
+            rest = refined.sample(body.rest_pos) if refined is not None else body.rest_pos
+            self._point_sampler = SurfacePointSampler(rest, faces, spacing=self._point_spacing)
             self._sample_faces = faces
             self._sample_input = None
 
         values = np.column_stack((body.pos, colors))
         if (not np.array_equal(self._sample_input, values)
                 or not np.array_equal(self._sample_loose, loose)):
-            samples = self._point_sampler.sample(values)
+            source = refined.sample(values) if refined is not None else values
+            samples = self._point_sampler.sample(source)
             if len(loose):
                 samples = np.concatenate((samples, values[loose]))
             self._sample_input = values
