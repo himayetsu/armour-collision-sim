@@ -37,9 +37,34 @@ VIEW_LABELS = {
 }
 
 
+def _surface_lighting_shader():
+    # Reuse PyQtGraph's vertex stage for both its fixed-function (0.13) and
+    # buffer-backed (0.14) mesh renderers.
+    vertex = gl.shaders.getShaderProgram('shaded').shaders[0]
+    legacy = 'gl_Normal' in vertex.code
+    normal = 'normal' if legacy else 'v_normal'
+    color = 'gl_Color' if legacy else 'v_color'
+    fragment = gl.shaders.FragmentShader(f"""
+        #ifdef GL_ES
+        precision mediump float;
+        #endif
+        varying vec3 {normal};
+        {'' if legacy else 'varying vec4 v_color;'}
+        void main() {{
+            vec3 light = normalize(vec3(-0.45, 0.65, 1.0));
+            float brightness = 0.90 + 0.17 * dot(normalize({normal}), light);
+            gl_FragColor = vec4({color}.rgb * brightness, {color}.a);
+        }}
+    """)
+    return gl.shaders.ShaderProgram('armorsim_surface', [vertex, fragment])
+
+
+_SURFACE_SHADER = _surface_lighting_shader()
+
+
 class BodySurface(gl.GLMeshItem):
     def __init__(self, body):
-        super().__init__(smooth=False, shader='shaded', glOptions='opaque')
+        super().__init__(smooth=False, shader=_SURFACE_SHADER.name, glOptions='opaque')
         self.updateGLOptions({GL.GL_CULL_FACE: True})
         self.topology = BodySurfaceTopology(body)
         self._positions = None
