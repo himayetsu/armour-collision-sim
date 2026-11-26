@@ -52,7 +52,9 @@ def _surface_lighting_shader():
         {'' if legacy else 'varying vec4 v_color;'}
         void main() {{
             vec3 light = normalize(vec3(-0.45, 0.65, 1.0));
-            float brightness = 0.90 + 0.17 * dot(normalize({normal}), light);
+            vec3 facing_normal = normalize({normal});
+            facing_normal = gl_FrontFacing ? facing_normal : -facing_normal;
+            float brightness = 0.90 + 0.17 * dot(facing_normal, light);
             gl_FragColor = vec4({color}.rgb * brightness, {color}.a);
         }}
     """)
@@ -65,13 +67,14 @@ _SURFACE_SHADER = _surface_lighting_shader()
 class BodySurface(gl.GLMeshItem):
     def __init__(self, body):
         super().__init__(smooth=False, shader=_SURFACE_SHADER.name, glOptions='opaque')
-        self.updateGLOptions({GL.GL_CULL_FACE: True})
+        self.updateGLOptions({GL.GL_CULL_FACE: False})
         self.topology = BodySurfaceTopology(body)
         self._positions = None
         self._colors = None
         self._faces = None
         self._sample_faces = None
         self._sample_input = None
+        self._sample_loose = None
         self._sample_buffers = None
 
     def update_body(self, body, colors):
@@ -105,11 +108,13 @@ class BodySurface(gl.GLMeshItem):
             self._sample_input = None
 
         values = np.column_stack((body.pos, colors))
-        if not np.array_equal(self._sample_input, values):
+        if (not np.array_equal(self._sample_input, values)
+                or not np.array_equal(self._sample_loose, loose)):
             samples = self._point_sampler.sample(values)
             if len(loose):
                 samples = np.concatenate((samples, values[loose]))
             self._sample_input = values
+            self._sample_loose = loose
             self._sample_buffers = (np.ascontiguousarray(samples[:, :3], dtype=np.float32),
                                     np.ascontiguousarray(samples[:, 3:], dtype=np.float32))
         return self._sample_buffers

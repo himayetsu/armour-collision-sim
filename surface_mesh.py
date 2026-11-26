@@ -142,7 +142,7 @@ class SurfacePointSampler:
 
 
 class BodySurfaceTopology:
-    """Cache the rest shell and discard facets whose supporting bonds break."""
+    """Map the rest shell to the body's connected fragments."""
 
     def __init__(self, body):
         self.particle_count = body.n_particles
@@ -156,11 +156,11 @@ class BodySurfaceTopology:
         rest_keys = self._spring_keys(body.springs)
         self._bonded_edges = np.isin(face_keys, rest_keys)
         self._bond_keys = face_keys[self._bonded_edges]
-        self._needs_connectivity = self._bonded_edges.sum(axis=1) < 2
         self.vertices, local_indices = np.unique(self._rest_faces, return_inverse=True)
         self._rest_mesh_faces = local_indices.reshape(-1, 3)
         self._surface_particles = np.zeros(self.particle_count, dtype=bool)
         self._surface_particles[self.vertices] = True
+        self._face_mask = None
         self._last_springs = object()
         self.update(body.springs)
 
@@ -174,23 +174,26 @@ class BodySurfaceTopology:
         if springs is self._last_springs:
             return
         self._last_springs = springs
-        present = np.ones(self._bonded_edges.shape, dtype=bool)
+        present = np.zeros(self._bonded_edges.shape, dtype=bool)
         present[self._bonded_edges] = np.isin(self._bond_keys, self._spring_keys(springs))
         bonded = np.zeros(self.particle_count, dtype=bool)
         if springs is not None:
             bonded[springs.ravel()] = True
-        keep = present.all(axis=1) & bonded[self._rest_faces].all(axis=1)
-        weak_faces = keep & self._needs_connectivity
-        if weak_faces.any():
-            # The remaining direct springs may not connect all three corners.
+        # Two surviving edges already connect the triangle. When fewer edges
+        # survive, the surrounding mesh can still connect its three corners.
+        keep = present.sum(axis=1) >= 2
+        needs_connectivity = ~keep & bonded[self._rest_faces].all(axis=1)
+        if needs_connectivity.any():
             i, j = springs.T
             graph = csr_matrix((np.ones(len(i), dtype=bool), (i, j)),
                                shape=(self.particle_count, self.particle_count))
             _, components = connected_components(graph, directed=False)
-            labels = components[self._rest_faces[weak_faces]]
-            keep[weak_faces] = (labels == labels[:, :1]).all(axis=1)
-        self.faces = self._rest_faces[keep]
-        self.mesh_faces = self._rest_mesh_faces[keep]
+            labels = components[self._rest_faces[needs_connectivity]]
+            keep[needs_connectivity] = (labels == labels[:, :1]).all(axis=1)
+        if not np.array_equal(self._face_mask, keep):
+            self._face_mask = keep
+            self.faces = self._rest_faces[keep]
+            self.mesh_faces = self._rest_mesh_faces[keep]
 
         if not len(self.faces):
             self.particles = np.arange(self.particle_count)

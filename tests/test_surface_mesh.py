@@ -75,6 +75,49 @@ class ExteriorSurfaceTests(unittest.TestCase):
         np.testing.assert_array_equal(surface.particles, [corner],
                                       err_msg='The detached corner must remain visible as a point')
 
+    def test_breaking_only_the_shared_diagonal_preserves_both_faces(self):
+        faces = np.array([[0, 1, 2], [0, 2, 3]])
+        perimeter = np.array([[0, 1], [1, 2], [2, 3], [3, 0]])
+        body = SimpleNamespace(n_particles=4, body_type='mesh', surface_faces=faces,
+                               springs=np.vstack((perimeter, [0, 2])))
+        surface = BodySurfaceTopology(body)
+        rendered_faces = surface.faces
+        mesh_faces = surface.mesh_faces
+
+        surface.update(perimeter)
+
+        np.testing.assert_array_equal(surface.faces, faces,
+                                      err_msg='A broken diagonal must leave both supported triangles filled')
+        self.assertIs(surface.faces, rendered_faces, 'Unchanged faces should retain their index buffer')
+        self.assertIs(surface.mesh_faces, mesh_faces, 'Unchanged faces should retain their local index buffer')
+
+    def test_face_stays_filled_when_the_surviving_paths_are_indirect(self):
+        faces = np.array([[0, 1, 2]])
+        surrounding = np.array([[0, 3], [1, 3], [2, 3]])
+        body = SimpleNamespace(n_particles=4, body_type='mesh', surface_faces=faces,
+                               springs=np.vstack((surrounding, [[0, 1], [0, 2], [1, 2]])))
+        surface = BodySurfaceTopology(body)
+
+        surface.update(surrounding)
+
+        np.testing.assert_array_equal(surface.faces, faces,
+                                      err_msg='A surface triangle should follow its connected corners')
+
+    def test_separated_plate_halves_keep_only_their_own_faces(self):
+        plate = ArmorPlate()
+        surface = BodySurfaceTopology(plate)
+        nx = plate.lattice_shape[-1]
+        left = np.arange(plate.n_particles) % nx < nx // 2
+        face_side = left[surface.faces]
+        expected = surface.faces[(face_side == face_side[:, :1]).all(axis=1)]
+        spring_side = left[plate.springs]
+
+        surface.update(plate.springs[spring_side[:, 0] == spring_side[:, 1]])
+
+        np.testing.assert_array_equal(surface.faces, expected,
+                                      err_msg='A split must remove faces across the cut and retain both exteriors')
+        self.assertEqual(len(surface.particles), 0, 'Both plate halves should remain filled at their exterior nodes')
+
     def test_facet_without_direct_bonds_cannot_join_detached_components(self):
         # The last corner reaches the face through two intermediate particles.
         body = SimpleNamespace(n_particles=5, body_type='penetrator',
